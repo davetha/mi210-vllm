@@ -9,11 +9,12 @@
 variable "BASE_IMAGE" {}
 variable "VLLM_FORK" {}
 variable "VLLM_REF" {}
-variable "AITER_FORK" {}
+variable "AITER_REPO" {}
 variable "AITER_REF" {}
 variable "AITER_CDNA2" {}
 variable "AITER_CDNA2_REF" {}
-variable "MAX_JOBS" { default = "24" }
+variable "MAX_JOBS"   { default = "24" }
+variable "TRITON_PIN" { default = "3.7.1" }
 variable "REGISTRY" { default = "ghcr.io/davetha" }
 variable "TAG"      { default = "dev" }
 
@@ -24,11 +25,12 @@ target "_common" {
     BASE_IMAGE      = BASE_IMAGE
     VLLM_FORK       = VLLM_FORK
     VLLM_REF        = VLLM_REF
-    AITER_FORK      = AITER_FORK
+    AITER_REPO      = AITER_REPO
     AITER_REF       = AITER_REF
     AITER_CDNA2     = AITER_CDNA2
     AITER_CDNA2_REF = AITER_CDNA2_REF
     MAX_JOBS        = MAX_JOBS
+    TRITON_PIN      = TRITON_PIN
   }
   # Attestations, so a consumer can audit what went in without trusting a tag.
   attest = [

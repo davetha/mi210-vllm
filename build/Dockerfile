@@ -30,13 +30,13 @@ ENV MAX_JOBS=${MAX_JOBS}
 FROM base AS fetch
 ARG VLLM_FORK
 ARG VLLM_REF
-ARG AITER_FORK
+ARG AITER_REPO
 ARG AITER_REF
 ARG AITER_CDNA2
 ARG AITER_CDNA2_REF
-RUN git clone --depth 1 --branch "${VLLM_REF}"        "${VLLM_FORK}"   /src/vllm \
- && git clone --recursive --depth 1 --branch "${AITER_REF}" "${AITER_FORK}" /src/aiter \
- && git clone --depth 1 --branch "${AITER_CDNA2_REF}" "${AITER_CDNA2}" /src/aiter-cdna2 \
+RUN git clone --depth 1 --branch "${VLLM_REF}"             "${VLLM_FORK}"   /src/vllm \
+ && git clone --recursive --depth 1 --branch "${AITER_REF}" "${AITER_REPO}" /src/aiter \
+ && git clone --depth 1 --branch "${AITER_CDNA2_REF}"       "${AITER_CDNA2}" /src/aiter-cdna2 \
  && for d in /src/vllm /src/aiter /src/aiter-cdna2; do \
         git -C "$d" rev-parse HEAD > "$d.sha"; done
 
@@ -45,12 +45,39 @@ RUN git clone --depth 1 --branch "${VLLM_REF}"        "${VLLM_FORK}"   /src/vllm
 # kernels that do not translate rather than skipping them silently, so its
 # report is an artifact, not a log line.
 FROM base AS aiter-build
+ARG TRITON_PIN
 COPY --from=fetch /src/aiter /src/aiter
 COPY --from=fetch /src/aiter-cdna2 /src/aiter-cdna2
+
+# 1. AITER itself, from source. Uninstall first: the base image ships an older
+#    amd-aiter whose gates are spelled differently, so the patches below would
+#    refuse to apply against it.
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=cache,target=/root/.cache/ccache \
-    cd /src/aiter && python3 -m pip install --no-build-isolation .
-RUN python3 /src/aiter-cdna2/repatch_gfx942_to_gfx90a.py --report /out/repatch-report.txt
+    python3 -m pip uninstall -y amd-aiter aiter 2>/dev/null; \
+    cd /src/aiter && python3 -m pip install --no-build-isolation . \
+ && python3 -m pip install --quiet "triton==${TRITON_PIN}" \
+ && python3 -c "import triton, aiter; assert triton.__version__ == '${TRITON_PIN}', triton.__version__"
+
+# 2. Generate gfx90a code objects from the gfx942 ones AITER ships. The tool
+#    re-assembles each instruction for gfx90a and writes only kernels that
+#    genuinely translate; the rest are reported NOT PORTABLE. Keep the tally.
+RUN set -e; \
+    SP=$(python3 -c 'import site;print(site.getsitepackages()[0])'); \
+    HSA=$(ls -d $SP/aiter_meta/hsa 2>/dev/null || ls -d $SP/aiter/hsa 2>/dev/null || ls -d /src/aiter/hsa); \
+    mkdir -p /out; \
+    python3 /src/aiter-cdna2/repatch_gfx942_to_gfx90a.py "$HSA/gfx942" /tmp/gfx90a \
+      | tee /out/repatch-report.txt; \
+    grep -q "TALLY" /out/repatch-report.txt || { echo "repatcher produced no tally"; exit 1; }; \
+    cp -r /tmp/gfx90a "$HSA/gfx90a"; \
+    ls "$HSA/gfx90a" | wc -l | xargs echo "gfx90a code objects written:" | tee -a /out/repatch-report.txt
+
+# 3. Open AITER's own gfx90a dispatch, then let vLLM route attention to it.
+#    --check re-reads the file: a patch that silently no-ops leaves an image
+#    that is merely slow, which is the failure this whole build guards against.
+RUN python3 /src/aiter-cdna2/patches/enable_gfx90a_asm_paths.py \
+ && python3 /src/aiter-cdna2/patches/enable_vllm_aiter_gfx90a.py \
+ && python3 /src/aiter-cdna2/patches/enable_vllm_aiter_gfx90a.py --check
 
 # ----------------------------------------------------------- csrc-build ------
 # Rebuild vLLM for gfx90a only and emit a wheel. Nothing from this stage reaches

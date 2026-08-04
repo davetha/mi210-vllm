@@ -9,16 +9,25 @@ BASE_IMAGE=rocm/vllm@sha256:ac1be45dac88db3fd32c1aa45ecd043c0efad7a809c1bcb36960
 BASE_IMAGE_TAG_FYI=rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0
 
 VLLM_FORK=https://github.com/davetha/vllm
-VLLM_REF=v0.26.1rc0-mi210.1
+VLLM_REF=v0.26.1rc0-mi210.1   # tagged 2026-08-04
 VLLM_UPSTREAM_BASE=v0.26.1rc0
 
-AITER_FORK=https://github.com/davetha/aiter
-AITER_REF=v0.1.19-gfx90a.1
+# Upstream AITER, unmodified. The fork davetha/aiter exists but carries no
+# gfx90a patches -- the gfx90a work is not source changes to AITER, it is
+# (a) binary repatching of the shipped gfx942 code objects and (b) patches that
+# open AITER's dispatch. Both live in aiter-cdna2. Pointing at upstream is the
+# honest description of what is built.
+AITER_REPO=https://github.com/ROCm/aiter
+AITER_REF=v0.1.19
 
 # The gfx942 -> gfx90a ASM repatcher. Not a source patch: it transforms the
 # code objects AITER ships, because AITER ships none for gfx90a.
 AITER_CDNA2=https://github.com/davetha/aiter-cdna2
-AITER_CDNA2_REF=v1.0
+AITER_CDNA2_REF=v1.0   # tagged 2026-08-04
 
 # Filled in by build/build.sh after a verified build. compose.yaml uses this.
 DERIVED_IMAGE=
+
+# AITER's JIT resolves against this exact Triton; a mismatch silently disables
+# the ASM paths rather than erroring.
+TRITON_PIN=3.7.1
