@@ -7,8 +7,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 set -a; . ./VERSIONS; set +a
 
-TAG="${1:-ghcr.io/davetha/vllm-mi210:$(date +%Y%m%d)}"
+# bake builds ${REGISTRY}/vllm-mi210:${TAG}. Derive both from one argument so
+# the name used after the build cannot drift from the name bake produced.
+FULL="${1:-ghcr.io/davetha/vllm-mi210:$(date +%Y%m%d)}"
+REGISTRY="${FULL%/*}"          # ghcr.io/davetha   (or the bare name if no slash)
+TAG="${FULL##*:}"              # the tag only
+[ "$REGISTRY" = "$FULL" ] && REGISTRY="local"
+IMAGE="${REGISTRY}/vllm-mi210:${TAG}"
 
+echo "=== image  : $IMAGE"
 echo "=== base   : $BASE_IMAGE"
 echo "=== vllm   : $VLLM_FORK @ $VLLM_REF"
 echo "=== aiter  : $AITER_REPO @ $AITER_REF"
@@ -20,7 +27,7 @@ echo
 BASE_IMAGE="$BASE_IMAGE" VLLM_FORK="$VLLM_FORK" VLLM_REF="$VLLM_REF" \
 AITER_REPO="$AITER_REPO" AITER_REF="$AITER_REF" \
 AITER_CDNA2="$AITER_CDNA2" AITER_CDNA2_REF="$AITER_CDNA2_REF" \
-TAG="${TAG##*:}" TRITON_PIN="$TRITON_PIN" \
+REGISTRY="$REGISTRY" TAG="$TAG" TRITON_PIN="$TRITON_PIN" \
   docker buildx bake -f build/docker-bake.hcl gfx90a --load
 
 # The in-build gate runs without a GPU, so the numeric suites were skipped.
@@ -30,14 +37,14 @@ echo
 echo "=== tier 2: numeric acceptance on real hardware ==="
 docker run --rm --device=/dev/kfd --device=/dev/dri --group-add video --ipc=host \
   -v /tmp/qualification:/out -e RECORD=/out/qualification.json \
-  --entrypoint verify-image "$TAG" --max-tier 2
+  --entrypoint verify-image "$IMAGE" --max-tier 2
 echo "qualification record: /tmp/qualification/qualification.json"
 
-DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' "$TAG" 2>/dev/null || echo "")
+DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE" 2>/dev/null || echo "")
 if [ -n "$DIGEST" ]; then
   sed -i "s|^DERIVED_IMAGE=.*|DERIVED_IMAGE=$DIGEST|" VERSIONS
   echo "recorded DERIVED_IMAGE=$DIGEST"
 else
   echo "NOTE: no RepoDigest yet - push the image, then re-run to record it."
-  echo "      compose.yaml must reference a digest, not '$TAG'."
+  echo "      compose.yaml must reference a digest, not '$IMAGE'."
 fi

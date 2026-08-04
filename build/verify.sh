@@ -87,13 +87,13 @@ fi
 echo
 [ "$MAX_TIER" -ge 2 ] && echo "=== tier 2: numeric acceptance (needs a GPU) ==="
 if [ "$MAX_TIER" -ge 2 ] && [ "$HAVE_GPU" = yes ]; then
-    cd /opt/tests
+    cd /opt/vllm
     gate "long-context paged attention vs Triton (11 tests)" \
-         "$PY -m pytest test_rocm_paged_attention_long_context.py -q -p no:warnings"
+         "$PY -m pytest tests/kernels/attention/test_rocm_paged_attention_long_context.py -q -p no:warnings"
     gate "wvSplitK strided activations (4 tests)" \
-         "$PY -m pytest test_rocm_unquantized_gemm.py -q -p no:warnings"
+         "$PY -m pytest tests/model_executor/layers/test_rocm_unquantized_gemm.py -q -p no:warnings"
     gate "int4 w4a16 MoE quant config (8 tests)" \
-         "$PY -m pytest test_moe.py -k 'wn16 and 4' -q -p no:warnings"
+         "$PY -m pytest tests/benchmarks/test_benchmark_moe_quant_config.py -q -p no:warnings"
     HW_VALIDATED=true
 elif [ "$MAX_TIER" -ge 2 ]; then
     note "no GPU visible" "SKIPPED - run 'docker run --device=/dev/kfd ... verify-image'"

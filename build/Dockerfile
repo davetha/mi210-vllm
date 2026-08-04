@@ -92,9 +92,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # The acceptance tests ship WITH the image. This project distributes to people
 # who have the hardware we do not, so the image has to be able to prove itself
 # on their cards, not only on ours.
-COPY --from=fetch /src/vllm/tests/kernels/attention/test_rocm_paged_attention_long_context.py /opt/tests/
-COPY --from=fetch /src/vllm/tests/model_executor/layers/test_rocm_unquantized_gemm.py         /opt/tests/
-COPY --from=fetch /src/vllm/tests/kernels/moe/test_moe.py                                     /opt/tests/
+# Layout mirrors the repo, because test_benchmark_moe_quant_config.py locates
+# benchmark_moe.py relative to itself. Flattening these into one directory is
+# what broke it the first time: upstream's test_moe.py also imports the `tests`
+# package, which a single copied file cannot satisfy.
+COPY --from=fetch /src/vllm/tests/kernels/attention/test_rocm_paged_attention_long_context.py /opt/vllm/tests/kernels/attention/
+COPY --from=fetch /src/vllm/tests/model_executor/layers/test_rocm_unquantized_gemm.py         /opt/vllm/tests/model_executor/layers/
+COPY --from=fetch /src/vllm/tests/benchmarks/test_benchmark_moe_quant_config.py               /opt/vllm/tests/benchmarks/
+COPY --from=fetch /src/vllm/benchmarks/kernels/benchmark_moe.py                               /opt/vllm/benchmarks/kernels/
 COPY probe/probe_image_patches.sh /usr/local/bin/probe-image-patches
 COPY build/verify.sh              /usr/local/bin/verify-image
 RUN chmod +x /usr/local/bin/probe-image-patches /usr/local/bin/verify-image
