@@ -103,10 +103,12 @@ The core image needs no GPU to build, which matters because most people who
 want it do not have a spare MI210 to build it on. Every patch this project
 carries works without AITER.
 
-AITER cannot be a Dockerfile stage: `import aiter` probes the GPU through
-`rocminfo`, and `docker build` exposes no `/dev/kfd`, so the import fails during
-the build however the stage is written. `add-aiter.sh` therefore runs in a
-container that has the cards and commits the result.
+AITER is a separate step by choice. `import aiter` probes the GPU through
+`rocminfo` and plain `docker build` exposes no `/dev/kfd` — but BuildKit CDI
+*can* pass the cards into a build, verified working here and written up in
+`docs/GPU-IN-BUILD.md`. It is kept out so the core image needs no CDI setup, no
+labs Dockerfile frontend and no GPU, which is the difference between "anyone can
+rebuild this" and "anyone with an MI210 can rebuild this".
 
 ## Known limits
 

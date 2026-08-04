@@ -11,11 +11,13 @@
 # THIS STAGE NEEDS NO GPU. It builds anywhere with docker, which matters because
 # most people who want the image do not have a spare MI210 to build it on.
 #
-# AITER is deliberately NOT here. `import aiter` probes the GPU through
-# rocminfo, so it cannot be imported during `docker build`, which exposes no
-# /dev/kfd. AITER is also an enhancement rather than a requirement: every patch
-# this project carries works without it. Add it afterwards, on a machine with
-# the cards, using build/add-aiter.sh.
+# AITER is deliberately NOT here, but not because it is impossible. `import
+# aiter` probes the GPU through rocminfo, and plain `docker build` exposes no
+# /dev/kfd -- however BuildKit CDI can pass the cards in, and it was verified
+# working here (see docs/GPU-IN-BUILD.md). It is left out because AITER is an
+# enhancement rather than a requirement -- every patch this project carries
+# works without it -- and keeping it out means this stage builds on any machine
+# with plain docker, no CDI setup and no GPU. Add it with build/add-aiter.sh.
 #
 # Budget ~45-90 min cold; minutes with a warm ccache.
 

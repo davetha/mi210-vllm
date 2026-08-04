@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # OPTIONAL. Adds AITER with gfx90a ASM kernels to an image built by build.sh.
 #
-# This cannot be a Dockerfile stage. `import aiter` probes the GPU through
-# rocminfo, and `docker build` exposes no /dev/kfd, so the import fails during
-# the build no matter how the stage is written. It therefore runs in a
-# container that HAS the cards, and commits the result -- which is what the
-# reference build in aiter-cdna2 has always done.
+# This is separate by choice, not necessity. `import aiter` probes the GPU
+# through rocminfo, and plain `docker build` exposes no /dev/kfd -- but BuildKit
+# CDI can pass the cards into a build, and that was verified working (see
+# docs/GPU-IN-BUILD.md). It is kept out of the Dockerfile so the core image
+# builds on any machine with plain docker, which most people rebuilding this
+# will have and a spare MI210 is not.
 #
 #   ./build/add-aiter.sh <input-image> [output-image]
 #
