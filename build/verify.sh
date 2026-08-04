@@ -102,11 +102,10 @@ else
     HW_VALIDATED=false
 fi
 
-# NOTE on scope. These tiers are unit-level. They all passed on an image that
-# then failed to start an engine, because compose set VLLM_ROCM_USE_AITER=1
-# against an image with no AITER and vLLM tried to JIT-build a module that does
-# not compile. A serve smoke test belongs here; until it exists, run one by
-# hand before publishing a digest. Recorded rather than left implicit.
+# NOTE on scope. Tiers 0-2 are unit-level and are necessary but not sufficient:
+# they all passed once on an image whose engine could not start, because AITER
+# was requested and absent. build.sh adds a tier 3 serve smoke test for exactly
+# that, gated on SMOKE_MODEL. Do not treat a green run here as "it works".
 
 # Claims carried by this image that hardware here cannot check. Recorded, never
 # asserted -- an untested claim stated as fact is how a project loses trust.
