@@ -57,3 +57,41 @@ jobs:
           check_tag "$AITER_REPO"  "$AITER_REF"       || fail=1
           check_tag "$AITER_CDNA2" "$AITER_CDNA2_REF" || fail=1
           exit $fail
+
+  registry-matches-fork:
+    # patches/registry.yaml indexes branches that live in the vLLM fork, not
+    # here. Nothing stops it drifting from what the pinned tag actually
+    # contains, and a registry that lists a patch the image does not carry is
+    # worse than no registry -- it reads like proof.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Every registry branch exists and is contained in VLLM_REF
+        run: |
+          set -euo pipefail
+          set -a; . ./VERSIONS; set +a
+          repo=${VLLM_FORK#https://github.com/}
+          fail=0
+          # `branch:` lines only -- registry.yaml has no other key ending in a
+          # bare ref, and grep is enough for a file this shape.
+          branches=$(sed -n 's/^[[:space:]]*branch:[[:space:]]*\(.*\)$/\1/p' patches/registry.yaml)
+          [ -n "$branches" ] || { echo "::error::no branches parsed from registry.yaml"; exit 1; }
+          for b in $branches; do
+            if ! git ls-remote --heads --exit-code "$VLLM_FORK" "refs/heads/$b" >/dev/null 2>&1; then
+              echo "::error::registry lists $b, which does not exist on $VLLM_FORK"
+              fail=1; continue
+            fi
+            # ahead_by == 0 means every commit on the branch is already in the
+            # tag, i.e. the patch really is in the image the build produces.
+            ahead=$(curl -sfL -H "Authorization: Bearer ${{ github.token }}" \
+              "https://api.github.com/repos/$repo/compare/$VLLM_REF...$b" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin).get("ahead_by","?"))')
+            if [ "$ahead" = "0" ]; then
+              echo "ok  $b is contained in $VLLM_REF"
+            else
+              echo "::error::$b has $ahead commit(s) NOT in $VLLM_REF; the image does not carry it"
+              fail=1
+            fi
+          done
+          exit $fail

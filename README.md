@@ -48,8 +48,9 @@ build/                the ONE compiled layer + its gates
   build.sh            build, verify on real cards, record the digest
   add-aiter.sh        OPTIONAL, needs the cards: AITER + gfx90a ASM kernels
   verify.sh           static markers -> runtime gates -> numeric tests
-patches/              Python-only overlays (empty: all patches are in the fork)
-  registry.yaml       per-patch "is this still needed?" predicates
+patches/              NO diffs here -- the patches are branches on the fork,
+  registry.yaml       already merged into VLLM_REF. This is their index, with
+  README.md           an obsolete_when predicate per patch. Read patches/README.md.
 tuning/               tuned fused_moe configs, and why there are none
 probe/                probe_image_patches.sh, also shipped inside the image
 upgrade.sh            triage every patch against a new upstream tag
