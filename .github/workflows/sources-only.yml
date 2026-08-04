@@ -1,0 +1,59 @@
+name: sources-only
+
+# This repo builds everything from git sources; it stores no build artifacts and
+# no binaries. That is easy to say and easy to break -- a stray `git add -A`
+# once committed a 22 MB ImageMagick blob named `aiter`, which read exactly like
+# a checked-in AITER binary. Enforce the property instead of documenting it.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  no-binaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject binary or oversized files
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r f; do
+            # git's own definition: a NUL byte in the first 8000 bytes.
+            if ! grep -Iq . "$f" 2>/dev/null; then
+              echo "::error file=$f::binary file committed; this repo is sources only"
+              fail=1
+              continue
+            fi
+            size=$(wc -c < "$f")
+            if [ "$size" -gt 262144 ]; then
+              echo "::error file=$f::$size bytes exceeds the 256 KiB source-file limit"
+              fail=1
+            fi
+          done < <(git ls-files)
+          exit $fail
+
+      - name: Every external source is pinned to an immutable ref
+        run: |
+          set -euo pipefail
+          set -a; . ./VERSIONS; set +a
+          fail=0
+          # A digest cannot be re-pushed; a tag can.
+          case "$BASE_IMAGE" in
+            *@sha256:*) ;;
+            *) echo "::error::BASE_IMAGE must be pinned by digest, got $BASE_IMAGE"; fail=1 ;;
+          esac
+          # Every ref we clone must resolve, and must be a tag rather than a
+          # branch: a branch moves and the build stops being reproducible.
+          check_tag() {
+            if ! git ls-remote --tags --exit-code "$1" "refs/tags/$2" >/dev/null 2>&1; then
+              echo "::error::$1 has no tag $2"
+              return 1
+            fi
+            echo "ok  $1 @ $2"
+          }
+          check_tag "$VLLM_FORK"   "$VLLM_REF"        || fail=1
+          check_tag "$AITER_REPO"  "$AITER_REF"       || fail=1
+          check_tag "$AITER_CDNA2" "$AITER_CDNA2_REF" || fail=1
+          exit $fail

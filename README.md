@@ -76,6 +76,37 @@ gate ACCEPTS  head_size 256    Qwen3-Next needs it; stock vLLM refuses it
 gate DECLINES block_size 544   Qwen3-Next safety; silently wrong otherwise
 ```
 
+## Everything is built from git sources
+
+This repo stores no binaries and no build artifacts. Every compiled thing in the
+image is produced during the build from a git clone at an immutable tag:
+
+| component | source | how it is built |
+|---|---|---|
+| `_rocm_C` (attention.cu) | `davetha/vllm` @ `v0.26.1rc0+mi210.1` | `pip wheel` in `build/Dockerfile` |
+| AITER Python + C++ | `ROCm/aiter` @ `v0.1.19` | `pip install --no-build-isolation .` |
+| gfx90a ASM code objects | `davetha/aiter-cdna2` @ `v1.0` | `repatch_gfx942_to_gfx90a.py`, at build time |
+
+`.github/workflows/sources-only.yml` enforces this rather than asserting it: it
+rejects any committed binary or file over 256 KiB, requires `BASE_IMAGE` to be
+digest-pinned, and checks that all three refs still resolve as tags.
+
+### The one exception, and it is upstream's
+
+AITER's ASM kernels are the exception, and no build anywhere compiles them from
+source. `ROCm/aiter` @ `v0.1.19` contains **2,863 prebuilt `.co` code objects and
+zero `.s`/`.S` files** — AMD ships these kernels only as binaries, for `gfx942`,
+`gfx950` and `gfx1250`. There is no gfx90a build to run and no assembly to run it
+on.
+
+So `aiter-cdna2` transforms the code objects rather than compiling them,
+re-assembling every instruction to prove portability and reporting the kernels
+that do not translate instead of skipping them quietly. Those binaries are
+fetched from upstream's git during `add-aiter.sh`; none are stored here.
+
+If AMD ever publishes the sources, this step becomes a compile and the repatcher
+can go.
+
 ## Building it
 
 ```bash
