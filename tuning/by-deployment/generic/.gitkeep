@@ -1,0 +1,4 @@
+Intentionally empty. VLLM_TUNED_CONFIG_FOLDER points here for a deployment
+nobody has tuned; vLLM then falls back to the configs it ships, which is the
+correct behaviour. Never pool configs from several models into one folder --
+the filename does not encode K. See ../../README.md.
