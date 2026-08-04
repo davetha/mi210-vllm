@@ -11,9 +11,9 @@ upstream.
 
 ## The measurement
 
-vLLM's default safetensors path yields **mmap-backed** tensors and then calls
-`.to(device)` on them. On ROCm that copy costs about **one second per tensor,
-independent of tensor size**.
+vLLM's default safetensors path yields tensors backed by safetensors' own
+mapping, and then calls `.to(device)` on them. On ROCm that copy costs about
+**one second per tensor, independent of tensor size**.
 
 Measured on 2x MI210 (gfx90a), cold tensors from untouched shards of
 `GLM-4.5-Air-AWQ`:
@@ -110,8 +110,60 @@ Not reported. Searches of `vllm-project/vllm` for slow ROCm safetensors loading
 returned nothing, and PR #46766 ("ModelOpt Llama-4 Checkpoints Take 5+ minutes to
 load") is a different bug — a view-chain in the Llama-4 fused-expert path.
 
-The underlying behaviour is a ROCm one: a host-to-device copy whose source is
-file-backed appears to take a slow path that copies in ordinary memory do not.
-The round timings observed (2001.89, 2002.01, 3003.19 ms) look like a retry or
-backoff rather than a bandwidth limit, which is worth investigating before
-reporting it as a vLLM bug rather than a ROCm one.
+## What the mechanism is, and what is still unknown
+
+Narrowed as far as black-box testing goes. **The cost follows the storage, not
+the tensor wrapper.** Any view of a safetensors tensor is slow; any copy out of
+it is fast:
+
+    safetensors tensor as-is                 1016.24 ms
+      [:] slice        (same storage)        1002.07 ms
+      .view_as         (same storage)        1000.73 ms
+      from_numpy(...)  (same storage)        1001.24 ms
+      .clone()         (new storage)            0.33 ms
+      empty().copy_()  (new storage)            0.52 ms
+
+**It is not simply "file-backed mmap".** Mapping the same shard by hand and
+building a tensor over it with `torch.frombuffer` is fast at every combination
+tested:
+
+    r--s  read-only  MAP_SHARED     0.61 ms
+    r--p  read-only  MAP_PRIVATE    0.53 ms
+    rw-s  writable   MAP_SHARED     2.29 ms
+    rw-p  writable   MAP_PRIVATE    1.16 ms
+
+`/proc/self/smaps` shows safetensors maps `rw-p` where a hand-rolled read-only
+map is `r--s`, but reproducing `rw-p` by hand does *not* reproduce the slowness.
+So the mapping flags are necessary context, not the trigger.
+
+**No syscall accounts for the second.** `strace -f -T` across the slow copy
+shows nothing long except idle worker futexes; the time is spent in userspace
+inside the HIP runtime. Combined with the consistency of the figure (1001.28,
+1001.46, 1001.62, 1001.96 ms) this reads as a poll loop with a one-second
+timeout rather than a bandwidth or fault cost.
+
+The exact HIP call is not identified. `AMD_LOG_LEVEL=4` produces no output in
+this build, so naming it needs a runtime with HIP API tracing.
+
+## Reporting
+
+There are three places this could go and the evidence does not yet settle which:
+
+- **vLLM** — actionable today: default to `eager` on ROCm, or document it.
+  This is the report worth filing first, because the fix is known and the repro
+  is two lines.
+- **safetensors** — it maps the checkpoint writable-private though it never
+  writes. Read-only mapping may sidestep whatever the runtime dislikes.
+- **ROCm** — a one-second userspace stall in a host-to-device copy is a runtime
+  bug wherever the trigger lives. Filing this needs the HIP call named first.
+
+Minimal reproduction:
+
+```python
+from safetensors import safe_open
+import torch
+with safe_open(shard, framework="pt") as f:
+    t = f.get_tensor(some_key)
+    t.to("cuda")            # ~1000 ms
+    t.clone().to("cuda")    #    ~0.3 ms
+```
