@@ -45,6 +45,11 @@ services:
       VLLM_TUNED_CONFIG_FOLDER: /opt/tuning
     volumes:
       - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface:ro
+      # A model outside the HF cache needs its own mount, at the SAME path
+      # inside so log lines and errors name a path that exists on the host.
+      # Uncomment and set both sides to your directory. For a one-off model,
+      # ./run.sh does this for you -- see docs/RUNNING.md.
+      # - /mnt/models:/mnt/models:ro
       - ./aiter-cache:/root/.aiter
       # Tuned configs for THIS deployment only.
       - ./tuning/by-deployment/${DEPLOYMENT:?set DEPLOYMENT in .env}:/opt/tuning:ro
@@ -54,6 +59,11 @@ services:
       # - ./patches/<name>.py:/opt/python/lib/python3.14/site-packages/vllm/<path>:ro
     ports:
       - "${PORT:-8000}:8000"
+    # The image has NO ENTRYPOINT -- its CMD is /bin/bash. Without this, docker
+    # execs the model path as a program and dies with
+    #   exec: "/path/to/model": is a directory: permission denied
+    # which reads like a mount or permissions fault rather than a missing verb.
+    entrypoint: ["vllm", "serve"]
     command:
       - ${MODEL:?set MODEL in .env}
       # Belt and braces with GPU_PINNED_MIN_XFER_SIZE above. Set to "auto" to

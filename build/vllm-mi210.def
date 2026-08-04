@@ -1,0 +1,84 @@
+# Apptainer definition for HPC sites that cannot run Docker.
+#
+#   ./build/build-apptainer.sh              # fills the {{ }} from VERSIONS
+#
+# UNVERIFIED. No Apptainer is installed on the machines this project is
+# developed on, so this file has never been built or run. It is written from
+# VERSIONS and OLCF's Frontier vLLM example, not from a successful build.
+# See docs/APPTAINER.md before trusting it. Reports welcome; if you get it
+# working, a PR replacing this notice with a build log is the best possible
+# contribution.
+#
+# Needs no GPU, same as build/Dockerfile -- so it can run on a login node.
+# AITER is NOT included, for the same reason it is not in the Dockerfile: it
+# probes the GPU on import. See docs/APPTAINER.md for adding it on a compute node.
+
+Bootstrap: docker
+From: {{ BASE_IMAGE }}
+
+%arguments
+    BASE_IMAGE=rocm/vllm@sha256:ac1be45dac88db3fd32c1aa45ecd043c0efad7a809c1bcb36960e369d9dbb8a6
+    VLLM_FORK=https://github.com/davetha/vllm
+    VLLM_REF=v0.26.1rc0+mi210.1
+    MAX_JOBS=24
+
+%post
+    set -eux
+    export PYTORCH_ROCM_ARCH=gfx90a
+    export VLLM_TARGET_DEVICE=rocm
+    export MAX_JOBS={{ MAX_JOBS }}
+
+    git clone --depth 1 --branch "{{ VLLM_REF }}" "{{ VLLM_FORK }}" /src/vllm
+    cd /src/vllm
+
+    # The one compiled thing: csrc/rocm/attention.cu carries the multi-pass
+    # paged-attention reduction and the gfx90a guards, so _rocm_C is rebuilt.
+    # Everything else this project carries is pure Python.
+    python3 -m pip wheel --no-deps --no-build-isolation -w /tmp/wheels .
+    python3 -m pip install --no-deps /tmp/wheels/*.whl
+
+    # Same attestation the Docker image carries, for the same reason: the final
+    # image has no source tree, so this records the answer while it is knowable.
+    {
+      echo "vllm_sha=$(git rev-parse HEAD)"
+      echo "reduction_extended=$(grep -c 'npar_loops > 16' csrc/rocm/attention.cu)"
+      echo "pytorch_rocm_arch=gfx90a"
+      echo "built_by=apptainer"
+    } > /usr/local/share/build-manifest.txt
+
+    # Ship the acceptance tests and the probe, so the image can prove itself on
+    # hardware this project does not have.
+    mkdir -p /opt/vllm/tests/kernels/attention /opt/vllm/tests/model_executor/layers
+    cp tests/kernels/attention/test_rocm_paged_attention_long_context.py /opt/vllm/tests/kernels/attention/
+    cp tests/model_executor/layers/test_rocm_unquantized_gemm.py         /opt/vllm/tests/model_executor/layers/
+
+    cd / && rm -rf /src/vllm /tmp/wheels
+
+%environment
+    # Not optional on ROCm, and not a vLLM setting -- a HIP runtime tunable.
+    # Above HIP's ~1 MiB default, .to(device) page-locks the caller's buffer and
+    # hsa_amd_memory_lock_to_pool costs ~1 s per tensor. See docs/LOAD-TIME.md.
+    export GPU_PINNED_MIN_XFER_SIZE=67108864
+    # This image has no AITER. 1 makes AITER's JIT build a module that fails to
+    # compile and takes engine startup down with it.
+    export VLLM_ROCM_USE_AITER=0
+    # A SIF is read-only. Triton writes here at first compile, so it must point
+    # somewhere writable or the first request fails. OLCF's Frontier example
+    # sets the same variable.
+    export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-/tmp/triton-cache}
+
+%runscript
+    exec vllm serve "$@"
+
+%labels
+    org.opencontainers.image.title vllm-mi210
+    org.opencontainers.image.source https://github.com/davetha/mi210-vllm
+    dev.mi210.arch gfx90a
+    dev.mi210.aiter none
+
+%help
+    vLLM patched for gfx90a (CDNA2): MI210, and MI250X as on OLCF Frontier.
+
+      apptainer run --rocm vllm-mi210.sif /path/to/model --host 0.0.0.0
+
+    UNVERIFIED on Apptainer -- see docs/APPTAINER.md.

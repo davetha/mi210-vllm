@@ -1,0 +1,157 @@
+# Running a model
+
+```bash
+./run.sh /path/to/your/model
+```
+
+That is the whole thing. It serves an OpenAI-compatible API on `:8000`.
+
+Everything on this page was run end-to-end on 2x MI210 on 2026-08-04 against
+`local/vllm-mi210@sha256:d83b8a77`; the outputs are copied from those runs.
+
+---
+
+## What you need
+
+- **Docker.** That is it for `run.sh`.
+- **An image.** `build/build.sh` records its digest in `VERSIONS` as
+  `DERIVED_IMAGE`, and `run.sh` picks it up from there. Override with
+  `IMAGE=<tag>` to use one you already have.
+- **The compose plugin, only if you use `compose.yaml`.** It is frequently
+  absent — the MI210 host this was developed on runs Docker 29.1.3 with no
+  compose plugin at all. `run.sh` needs only `docker run`, which is why it is
+  the documented path.
+
+## Three ways to name a model
+
+```bash
+./run.sh /mnt/models/my-model          # a directory on this machine
+./run.sh Qwen/Qwen3-8B                 # an HF repo id; downloads to HF_CACHE
+./run.sh /mnt/models/big --tensor-parallel-size 2 --max-model-len 200000
+```
+
+Anything after the model goes to vLLM untouched, so the entire server CLI is
+available without this script knowing about it.
+
+A local directory is mounted **at its own path** inside the container. That is
+deliberate: remapping to `/models` would make every log line and error name a
+path that does not exist on your host.
+
+## What it sets for you, and why
+
+| setting | value | why |
+|---|---|---|
+| `GPU_PINNED_MIN_XFER_SIZE` | 67108864 | Not optional on ROCm. Above HIP's ~1 MiB default, `.to(device)` page-locks the caller's buffer and `hsa_amd_memory_lock_to_pool` costs ~1 s per tensor against a 14 ms DMA. On a MoE checkpoint that is hours. See [LOAD-TIME.md](LOAD-TIME.md). |
+| `VLLM_ROCM_USE_AITER` | 0 | The core image has no AITER. Setting 1 makes AITER's JIT compile a module that fails and takes engine startup with it. Run `build/add-aiter.sh` first, then set 1. |
+| `--max-model-len` | **not passed** | vLLM derives it from the checkpoint. See below. |
+| `--tensor-parallel-size` | 1 (vLLM default) | Always works. Raise it for models that need the memory. |
+| tuned MoE configs | none | Unset means vLLM uses its own shipped configs — right for a model nobody here has tuned. `DEPLOYMENT=<name>` opts into `tuning/by-deployment/<name>/`. |
+
+## Do not set `--max-model-len` unless you mean it
+
+Leave it alone and vLLM reads the model's own limit:
+
+```
+INFO [model.py:1848] Using max model len 40960
+```
+
+Setting it **above** what the checkpoint supports is a hard startup failure, not
+a clamp:
+
+```
+Value error, User-specified max_model_len (262144) is greater than the derived
+max_model_len (max_position_embeddings=40960 ... in model's config.json).
+To allow overriding this maximum, set the env var VLLM_ALLOW_LONG_MAX_MODEL_LEN=1.
+```
+
+Set it *below* the model's limit to save KV-cache memory — that is the normal
+reason to pass it. Values above 131,072 are what the paged-attention work in
+this image exists for; stock vLLM cannot serve them on gfx90a.
+
+## Checking it works
+
+Startup is ~35-75 s for a small model, minutes to tens of minutes for a large
+one, dominated by weight loading.
+
+```bash
+curl -sf http://localhost:8000/health          # 200 when ready
+curl -s  http://localhost:8000/v1/models       # confirms max_model_len
+```
+
+```bash
+curl -s http://localhost:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"/path/to/your/model",
+       "messages":[{"role":"user","content":"hello"}],
+       "max_tokens":40,"temperature":0}'
+```
+
+The `model` field must be **exactly** the string you passed to `run.sh` — for a
+local model that is the full path. `GET /v1/models` tells you what it is.
+
+## run.sh or compose.yaml
+
+Use **`run.sh`** for a model you want to serve now: any path, no config file, no
+compose plugin.
+
+Use **`compose.yaml`** for a deployment you run repeatedly — it pins the model,
+TP size, context length and tuned-config folder in `.env`, and restarts on boot.
+Two constraints to know:
+
+- Its HF cache mount is **read-only**, so the model must already be in the
+  cache. It will not download one.
+- A model outside the HF cache needs its own bind mount; there is a commented
+  line in `compose.yaml` for exactly that.
+
+```bash
+cp .env.example .env    # edit MODEL, DEPLOYMENT, TP_SIZE, MAX_MODEL_LEN
+docker compose up -d
+```
+
+`DEPLOYMENT=generic` is the right choice for anything untuned — the folder is
+empty and vLLM falls back to its own configs. Never point it at a folder holding
+configs from several models: the tuned-config filename does not encode `K`, so
+two models can collide. [tuning/README.md](../tuning/README.md) has the case
+where that cost 7.5 GPU-hours.
+
+## Multiple GPUs
+
+`--tensor-parallel-size 2` uses both cards. It requires the model's attention
+head count to divide by the TP size, so it is not a free knob — a model with 3
+KV heads will not shard across 2 cards.
+
+Raise it when the model does not fit in one card's 64 GiB, not by default.
+
+## When something goes wrong
+
+| symptom | cause |
+|---|---|
+| `exec: "/path/to/model": is a directory: permission denied` | The image has **no ENTRYPOINT**; the command must start with `vllm serve`. `run.sh` and `compose.yaml` both do. Hand-written `docker run` invocations hit this. |
+| `the input device is not a TTY` | `docker run -it` under ssh/cron/CI. `run.sh` adds `-it` only when stdin is a terminal. |
+| `max_model_len (N) is greater than the derived max_model_len` | See above — omit the flag. |
+| `Free memory 0.3/63.98 GiB` at startup | Something else is holding VRAM. `docker ps` — a forgotten container is the usual answer, not a leak. |
+| `module_rmsnorm_quant ... build failed` | `VLLM_ROCM_USE_AITER=1` against an image without AITER. Run `build/add-aiter.sh`, or leave it 0. |
+| Load takes hours | `GPU_PINNED_MIN_XFER_SIZE` is not set. [LOAD-TIME.md](LOAD-TIME.md). |
+| `vllm serve --help` shows almost nothing | The default help is grouped. Use `--help=all`, or `--help=max-model-len` for one flag. |
+
+To see what the image actually carries:
+
+```bash
+docker run --rm --entrypoint probe-image-patches <image>
+docker run --rm --entrypoint cat <image> /usr/local/share/build-manifest.txt
+```
+
+## What this hardware will and will not do
+
+MI210 is CDNA2 (`gfx90a`). It has no FP8 datapath — that arrived with CDNA3 —
+so FP8 checkpoints do not get native acceleration here even when they load.
+
+Models this project has actually served on these cards, with the measurements
+recorded in [mi210-llm-stack](https://github.com/davetha/mi210-llm-stack):
+GLM-4.5-Air (AWQ int4), Qwen3-Next-80B (head_size 256, which stock vLLM refuses
+on this arch), Qwen3-235B (W8A8), Qwen3-30B-A3B.
+
+Two guards in this image are gfx90a-specific and will decline shapes rather than
+compute them wrongly. If a model reports a declined shape, that is the guard
+doing its job — the free attention kernel silently drops part of the V dimension
+when `head_size % 64 != 0`. See the README table.

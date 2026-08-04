@@ -42,6 +42,7 @@ The gfx90a work here builds on people who got there first:
 
 ```text
 VERSIONS              every pin; base image by DIGEST, never a tag
+run.sh                serve any model in one command -- docs/RUNNING.md
 compose.yaml          the stack consumers run
 build/                the ONE compiled layer + its gates
   Dockerfile          rebuilds _rocm_C for gfx90a. NEEDS NO GPU.
@@ -76,6 +77,21 @@ Two runtime gates encode findings specific to this hardware:
 gate ACCEPTS  head_size 256    Qwen3-Next needs it; stock vLLM refuses it
 gate DECLINES block_size 544   Qwen3-Next safety; silently wrong otherwise
 ```
+
+## Running a model
+
+```bash
+./run.sh /path/to/your/model        # or an HF repo id
+```
+
+Serves an OpenAI-compatible API on `:8000`. Needs only `docker run` — no compose
+plugin, no config file. `compose.yaml` is the other way in, for a deployment you
+run repeatedly. Both are covered in [docs/RUNNING.md](docs/RUNNING.md), along
+with the settings that are not optional on ROCm and the errors worth
+recognising.
+
+On an HPC site without Docker, see [docs/APPTAINER.md](docs/APPTAINER.md) —
+Frontier's MI250X is gfx90a, the same architecture this image targets.
 
 ## Everything is built from git sources
 
