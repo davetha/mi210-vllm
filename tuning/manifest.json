@@ -1,0 +1,26 @@
+{
+  "_comment": [
+    "Master list of every tuned fused_moe config produced on this hardware.",
+    "The filename vLLM opens encodes only (E, N, device_name, dtype). It does",
+    "NOT encode K (hidden size), so 'shape_key' alone does not identify a",
+    "config -- 'k' is recorded separately and is why by-deployment/ exists.",
+    "",
+    "safe_to_deploy is 0. That is the finding. See ../tuning/README.md."
+  ],
+  "deployments": [
+    { "dir": "qwen3-30b-tp2",      "model": "Qwen3-30B-A3B",     "tp": 2, "e": 128, "n": 384,  "k": 2048, "shape_key": "E=128,N=384"  },
+    { "dir": "qwen3-30b-tp1",      "model": "Qwen3-30B-A3B",     "tp": 1, "e": 128, "n": 768,  "k": 2048, "shape_key": "E=128,N=768",
+      "ambiguous_with": "qwen3-235b-tp2", "note": "same shape_key, different K (2048 vs 4096)" },
+    { "dir": "qwen3-235b-tp2",     "model": "Qwen3-235B",        "tp": 2, "e": 128, "n": 768,  "k": 4096, "shape_key": "E=128,N=768",
+      "ambiguous_with": "qwen3-30b-tp1",  "note": "same shape_key, different K (4096 vs 2048)" },
+    { "dir": "qwen3-next-80b-tp2", "model": "Qwen3-Next-80B-A3B","tp": 2, "e": 512, "n": 256,  "k": 2048, "shape_key": "E=512,N=256"  }
+  ],
+  "configs": [],
+  "summary": {
+    "shipped": 0,
+    "measured_better_than_untuned": 0,
+    "safe_to_deploy": 0,
+    "gpu_hours_spent": 13,
+    "note": "Two sweeps completed. The int8 config measured 0.786x prefill / 0.925x decode; the int4 config was flat at the tuned size and 0.678x prefill. Neither is a tuning failure so much as an M-coverage failure: nearest-M matching has no fallback, so decode-only configs are applied to prefill. Recorded so the sweep is not repeated."
+  }
+}

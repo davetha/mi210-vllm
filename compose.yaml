@@ -1,0 +1,52 @@
+# The production stack. Consumers run this; nobody but a maintainer runs build/.
+#
+# Layering, deliberately:
+#   image    -> everything that had to be compiled (attention.cu, AITER ASM)
+#   volumes  -> everything that did not (Python overlays, tuned configs)
+#
+# The second kind can be edited and restarted without a rebuild. The first kind
+# cannot, which is the only reason build/Dockerfile exists.
+
+name: mi210-vllm
+
+services:
+  inference:
+    # Set by build/build.sh after a verified build. Digest, never a tag.
+    image: ${DERIVED_IMAGE:?run build/build.sh, or copy DERIVED_IMAGE from VERSIONS}
+    restart: unless-stopped
+    init: true
+    ipc: host
+    cap_add: [SYS_PTRACE, IPC_LOCK]
+    ulimits:
+      memlock: -1
+    security_opt: [seccomp=unconfined, label=disable]
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    environment:
+      VLLM_ROCM_USE_AITER: "1"
+      # Point at ONE deployment's folder, never at a flat pile. The tuned-config
+      # filename is E=<experts>,N=<intermediate/TP>,device_name=...,dtype=...
+      # and does NOT encode K (hidden size). Qwen3-30B at TP=1 and Qwen3-235B at
+      # TP=2 both render E=128,N=768 while differing in K (2048 vs 4096), so a
+      # flat folder cannot keep them apart. See tuning/README.md.
+      VLLM_TUNED_CONFIG_FOLDER: /opt/tuning
+    volumes:
+      - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface:ro
+      - ./aiter-cache:/root/.aiter
+      # Tuned configs for THIS deployment only.
+      - ./tuning/by-deployment/${DEPLOYMENT:?set DEPLOYMENT in .env}:/opt/tuning:ro
+      # Python-only overlays live here. Empty today: every patch we carry is in
+      # the vLLM fork and therefore already inside the image. Overlays are for
+      # things not yet promoted to the fork.
+      # - ./patches/<name>.py:/opt/python/lib/python3.14/site-packages/vllm/<path>:ro
+    ports:
+      - "${PORT:-8000}:8000"
+    command:
+      - ${MODEL:?set MODEL in .env}
+      - --host
+      - 0.0.0.0
+      - --tensor-parallel-size
+      - "${TP_SIZE:-2}"
+      - --max-model-len
+      - "${MAX_MODEL_LEN:-262144}"

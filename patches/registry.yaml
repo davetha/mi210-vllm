@@ -1,0 +1,44 @@
+# Every patch carries two predicates:
+#   obsolete_when  -- true on a new base => DROP the branch, close the PR
+#   verify         -- the test that says it still works
+#
+# Without the first, upgrades become archaeology. Determining these six by hand
+# on 2026-08-04 took hours; they are written down so it never costs that again.
+# Dropping a patch is the GOOD outcome: it means the work landed upstream.
+
+- name: rocm-paged-attention
+  branch: rocm-paged-attention-256k
+  upstream: [39001]
+  carries: "Eugene Kuznetsov's multi-pass reduction + 3 local gfx90a commits"
+  obsolete_when: "grep -q 'npar_loops > 16' csrc/rocm/attention.cu"
+  still_needed_when: "grep -q 'max_seq_len <= 128 \\* 1024' vllm/platforms/rocm.py"
+  verify: "pytest tests/kernels/attention/test_rocm_paged_attention_long_context.py"   # 11
+
+- name: wvsplitk-oob
+  branch: rocm-wvsplitk-oob-strided
+  upstream: [50618]
+  carries: "John Qin / Yanyuan Qin; reproduced on gfx90a before merging"
+  obsolete_when: "grep -q 'contiguous_format' vllm/model_executor/layers/utils.py"
+  verify: "pytest tests/model_executor/layers/test_rocm_unquantized_gemm.py"           # 4
+
+- name: int4-interleave-gfx9
+  branch: rocm-int4-interleave-gfx9
+  upstream: [43389]
+  carries: "amd-xavierwang's int4 repack, gate widened from on_gfx1x to include GFX9"
+  # If upstream widens it themselves, ours is redundant.
+  obsolete_when: "grep -q 'on_gfx9' vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_wna16.py"
+  verify: "pytest tests/kernels/moe/test_moe.py -k 'wn16 and 4'"                        # 8
+
+- name: sharded-state-tp
+  branch: fix/sharded-state-tp-mismatch
+  upstream: []
+  carries: "local; reject checkpoints saved at a different TP size"
+  obsolete_when: "grep -q '_saved_tp_size' vllm/model_executor/model_loader/sharded_state_loader.py"
+  verify: "pytest tests/model_executor/model_loader/test_sharded_state_loader.py -k 'saved_tp_size or load_weights or filter_subtensors'"  # 7
+
+- name: benchmark-moe-int8
+  branch: fix-benchmark-moe-int8-w8a16
+  upstream: [31011]   # stale, auto-closed 2026-04-30
+  carries: "local, grouping taken from #31011"
+  obsolete_when: "! grep -q 'quant_dtype = torch.int8' benchmarks/kernels/benchmark_moe.py"
+  verify: "pytest tests/benchmarks/test_benchmark_moe_quant_config.py"                  # 8

@@ -1,0 +1,24 @@
+# Every pin for the stack. Nothing here is a floating tag.
+#
+# Base image is pinned by DIGEST, not tag. A tag can be re-pushed; a digest
+# cannot. This matters more than it sounds: an image in this project once
+# reported vllm 0.26.1rc1.dev0+g53f6dd5c6 while its own
+# fused_moe/utils.py did not match that commit, which cost two debugging
+# cycles. The image is authoritative; upstream SHAs are documentation.
+BASE_IMAGE=rocm/vllm@sha256:ac1be45dac88db3fd32c1aa45ecd043c0efad7a809c1bcb36960e369d9dbb8a6
+BASE_IMAGE_TAG_FYI=rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0
+
+VLLM_FORK=https://github.com/davetha/vllm
+VLLM_REF=v0.26.1rc0-mi210.1
+VLLM_UPSTREAM_BASE=v0.26.1rc0
+
+AITER_FORK=https://github.com/davetha/aiter
+AITER_REF=v0.1.19-gfx90a.1
+
+# The gfx942 -> gfx90a ASM repatcher. Not a source patch: it transforms the
+# code objects AITER ships, because AITER ships none for gfx90a.
+AITER_CDNA2=https://github.com/davetha/aiter-cdna2
+AITER_CDNA2_REF=v1.0
+
+# Filled in by build/build.sh after a verified build. compose.yaml uses this.
+DERIVED_IMAGE=
