@@ -44,6 +44,13 @@ services:
       - "${PORT:-8000}:8000"
     command:
       - ${MODEL:?set MODEL in .env}
+      # Not optional on ROCm. The default safetensors path yields mmap-backed
+      # tensors, and .to(device) from a file-backed source costs ~1 s per
+      # tensor regardless of size. GLM-4.5-Air has 50,826 expert tensors:
+      # 14.15 h default vs 1.47 min with eager, measured. See docs/LOAD-TIME.md.
+      # Note prefetch does NOT help -- it warms page cache then still uses mmap.
+      - --safetensors-load-strategy
+      - "${SAFETENSORS_LOAD_STRATEGY:-eager}"
       - --host
       - 0.0.0.0
       - --tensor-parallel-size

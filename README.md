@@ -75,9 +75,11 @@ gate DECLINES block_size 544   Qwen3-Next safety; silently wrong otherwise
 
 ## Known limits
 
-- **Model load is slow.** Large AWQ MoE checkpoints take hours: the per-expert
-  AWQ->WNA16 conversion in `moe_wna16_weight_loader` dominates, not I/O. Use the
-  `sharded_state` snapshot workflow — see `docs/LOAD-TIME.md`. Unreported upstream.
+- **Model load needs `--safetensors-load-strategy=eager`** (compose sets it).
+  Without it large MoE checkpoints take hours, because on ROCm `.to(device)` from
+  an mmap-backed tensor costs ~1 s each regardless of size — 14.15 h vs 1.47 min
+  measured on GLM-4.5-Air. `prefetch` does *not* help. See `docs/LOAD-TIME.md`.
+  Unreported upstream.
 - **`moe_wna16.py` is not ported**, so `awq`/`awq_marlin` checkpoints do not get
   the int4 interleave win. Only `compressed-tensors` does.
 - **No tuned MoE configs ship.** Every one produced here measured neutral or
