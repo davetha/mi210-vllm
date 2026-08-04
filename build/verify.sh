@@ -51,8 +51,14 @@ gate "int4 interleave enabled on GFX9" \
      "grep -q 'on_gfx1x() or on_gfx9()' $SP/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_wna16.py"
 gate "wvSplitK stride guard present" \
      "grep -q 'contiguous_format' $SP/model_executor/layers/utils.py"
-gate "aiter gfx90a code objects were produced" \
-     "test -s /usr/local/share/repatch-report.txt"
+# AITER is optional and added later by build/add-aiter.sh, so this reports
+# rather than gates. An image without it is fully functional; it just does not
+# reach the ASM attention paths.
+if [ -s /usr/local/share/repatch-report.txt ]; then
+    note "aiter gfx90a code objects present" "OK"
+else
+    note "aiter gfx90a code objects" "ABSENT (optional; see build/add-aiter.sh)"
+fi
 
 echo
 [ "$MAX_TIER" -ge 1 ] && echo "=== tier 1: gate behaviour (does it actually select it) ==="

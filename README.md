@@ -42,9 +42,10 @@ The gfx90a work here builds on people who got there first:
 VERSIONS              every pin; base image by DIGEST, never a tag
 compose.yaml          the stack consumers run
 build/                the ONE compiled layer + its gates
-  Dockerfile          rebuilds _rocm_C for gfx90a, installs+repatches AITER
-  verify.sh           static markers -> runtime gates -> numeric tests
+  Dockerfile          rebuilds _rocm_C for gfx90a. NEEDS NO GPU.
   build.sh            build, verify on real cards, record the digest
+  add-aiter.sh        OPTIONAL, needs the cards: AITER + gfx90a ASM kernels
+  verify.sh           static markers -> runtime gates -> numeric tests
 patches/              Python-only overlays (empty: all patches are in the fork)
   registry.yaml       per-patch "is this still needed?" predicates
 tuning/               tuned fused_moe configs, and why there are none
@@ -72,6 +73,22 @@ Two runtime gates encode findings specific to this hardware:
 gate ACCEPTS  head_size 256    Qwen3-Next needs it; stock vLLM refuses it
 gate DECLINES block_size 544   Qwen3-Next safety; silently wrong otherwise
 ```
+
+## Building it
+
+```bash
+./build/build.sh                 # no GPU required; builds anywhere
+./build/add-aiter.sh <image>     # optional, requires gfx90a cards
+```
+
+The core image needs no GPU to build, which matters because most people who
+want it do not have a spare MI210 to build it on. Every patch this project
+carries works without AITER.
+
+AITER cannot be a Dockerfile stage: `import aiter` probes the GPU through
+`rocminfo`, and `docker build` exposes no `/dev/kfd`, so the import fails during
+the build however the stage is written. `add-aiter.sh` therefore runs in a
+container that has the cards and commits the result.
 
 ## Known limits
 
