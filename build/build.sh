@@ -15,19 +15,23 @@ echo "=== aiter  : $AITER_FORK @ $AITER_REF"
 echo "=== repatch: $AITER_CDNA2 @ $AITER_CDNA2_REF"
 echo
 
-docker build -f build/Dockerfile -t "$TAG" \
-  --build-arg BASE_IMAGE="$BASE_IMAGE" \
-  --build-arg VLLM_FORK="$VLLM_FORK"   --build-arg VLLM_REF="$VLLM_REF" \
-  --build-arg AITER_FORK="$AITER_FORK" --build-arg AITER_REF="$AITER_REF" \
-  --build-arg AITER_CDNA2="$AITER_CDNA2" --build-arg AITER_CDNA2_REF="$AITER_CDNA2_REF" \
-  .
+# bake reads VERSIONS through the environment; the gated `verified` stage is
+# the default target, so the safe thing happens without a flag.
+BASE_IMAGE="$BASE_IMAGE" VLLM_FORK="$VLLM_FORK" VLLM_REF="$VLLM_REF" \
+AITER_FORK="$AITER_FORK" AITER_REF="$AITER_REF" \
+AITER_CDNA2="$AITER_CDNA2" AITER_CDNA2_REF="$AITER_CDNA2_REF" \
+TAG="${TAG##*:}" \
+  docker buildx bake -f build/docker-bake.hcl gfx90a --load
 
 # The in-build gate runs without a GPU, so the numeric suites were skipped.
 # Run them now, with the cards visible, before anyone deploys this.
 echo
-echo "=== numeric acceptance on real hardware ==="
+# Tiers 0-1 ran inside the build. Tier 2 needs cards.
+echo "=== tier 2: numeric acceptance on real hardware ==="
 docker run --rm --device=/dev/kfd --device=/dev/dri --group-add video --ipc=host \
-  "$TAG" verify-image
+  -v /tmp/qualification:/out -e RECORD=/out/qualification.json \
+  --entrypoint verify-image "$TAG" --max-tier 2
+echo "qualification record: /tmp/qualification/qualification.json"
 
 DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' "$TAG" 2>/dev/null || echo "")
 if [ -n "$DIGEST" ]; then
