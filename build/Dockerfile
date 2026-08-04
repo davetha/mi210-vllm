@@ -103,4 +103,5 @@ RUN chmod +x /usr/local/bin/probe-image-patches /usr/local/bin/verify-image
 # Gate. Tiers 0-1 need no GPU and run here, so a half-patched image cannot be
 # built. Tiers 2-3 need cards and run from build.sh against the real hardware.
 FROM final AS verified
-RUN /usr/local/bin/verify-image --max-tier 1
+# Only tier 0 can run here: tiers 1-2 need /dev/kfd, which docker build has not.
+RUN /usr/local/bin/verify-image --max-tier 0

@@ -13,11 +13,14 @@
 # Tiers, after lemonade-sdk/vllm-rocm's qualification suite:
 #
 #   0 static    no GPU   markers, imports, native ext present     gating
-#   1 gate      no GPU   does the gate SELECT the patched path    gating
-#   2 numeric   GPU      agreement with reference implementations gating
+#   1 gate      GPU       does the gate SELECT the patched path    gating
+#   2 numeric   GPU       agreement with reference implementations gating
 #
-# Tiers 0-1 run during `docker build`. Tier 2 needs cards, so build.sh runs it
-# against real hardware before recording a digest. --max-tier bounds the run.
+# Only tier 0 runs during `docker build`. Tier 1 looked GPU-free -- it calls a
+# pure Python predicate -- but that predicate branches on the detected
+# architecture, and vllm.platforms.rocm cannot resolve _GCN_ARCH without
+# /dev/kfd. In a GPU-less build every gate returns False and reads as a
+# regression. Tiers 1-2 therefore run from build.sh against the real cards.
 #
 # Claims we have NOT run on the relevant silicon are recorded
 # hardware_validated=false rather than asserted. The RDNA4 head_size
@@ -61,7 +64,15 @@ else
 fi
 
 echo
-[ "$MAX_TIER" -ge 1 ] && echo "=== tier 1: gate behaviour (does it actually select it) ==="
+HAVE_GPU=no
+$PY -c 'import torch;assert torch.cuda.is_available()' 2>/dev/null && HAVE_GPU=yes
+
+if [ "$MAX_TIER" -ge 1 ] && [ "$HAVE_GPU" = no ]; then
+    echo "=== tier 1: gate behaviour ==="
+    note "no GPU visible" "SKIPPED - arch detection needs /dev/kfd"
+fi
+if [ "$MAX_TIER" -ge 1 ] && [ "$HAVE_GPU" = yes ]; then
+echo "=== tier 1: gate behaviour (does it actually select it) ==="
 # A marker says the source is present. Only a run says the gate selects it.
 # docs/55 records an image that carried the CK carve-outs whose workers still
 # chose the Triton kernel.
@@ -71,10 +82,11 @@ gate "gate DECLINES block_size 544 on gfx90a (Qwen3-Next safety)" \
      "$PY -c 'import torch;from vllm.platforms.rocm import use_rocm_custom_paged_attention as g;assert not g(torch.bfloat16,128,544,8,65536,0,\"auto\",None,None)'"
 gate "gate ACCEPTS 1M context" \
      "$PY -c 'import torch;from vllm.platforms.rocm import use_rocm_custom_paged_attention as g;assert g(torch.bfloat16,128,16,8,1048576,0,\"auto\",None,None)'"
+fi
 
 echo
 [ "$MAX_TIER" -ge 2 ] && echo "=== tier 2: numeric acceptance (needs a GPU) ==="
-if [ "$MAX_TIER" -ge 2 ] && $PY -c 'import torch;assert torch.cuda.is_available()' 2>/dev/null; then
+if [ "$MAX_TIER" -ge 2 ] && [ "$HAVE_GPU" = yes ]; then
     cd /opt/tests
     gate "long-context paged attention vs Triton (11 tests)" \
          "$PY -m pytest test_rocm_paged_attention_long_context.py -q -p no:warnings"
