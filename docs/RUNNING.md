@@ -37,6 +37,39 @@ A local directory is mounted **at its own path** inside the container. That is
 deliberate: remapping to `/models` would make every log line and error name a
 path that does not exist on your host.
 
+## The rest of the vLLM CLI
+
+Serving is the common case, not the only one. Any vLLM subcommand works, and so
+does any command at all:
+
+```bash
+./run.sh bench latency --model /mnt/models/my-model --input-len 32 --output-len 8
+./run.sh chat     --url http://localhost:8000/v1 --model /mnt/models/my-model --quick "hello"
+./run.sh complete --url http://localhost:8000/v1 --model /mnt/models/my-model --quick "The capital of France is"
+./run.sh run-batch -i prompts.jsonl -o out.jsonl --model /mnt/models/my-model
+./run.sh collect-env
+
+./run.sh shell                                  # interactive bash in the image
+./run.sh exec probe-image-patches               # what patches does this image carry
+./run.sh exec cat /usr/local/share/build-manifest.txt
+./run.sh exec python3 -c 'import torch; print(torch.cuda.device_count())'
+```
+
+Two things happen automatically, because getting them wrong is the usual reason
+these fail:
+
+**Every argument that names a path on your machine is mounted**, not just the
+model. `bench --model X --dataset-path Y` works with no special case, because
+the scan looks at all arguments rather than a designated one.
+
+**Commands that connect out get host networking.** `chat`, `complete` and
+`bench serve` talk to a server rather than being one, so `http://localhost:8000`
+has to mean your machine and not an empty container namespace. Commands that
+listen (`serve`, `launch`) publish `$PORT` instead.
+
+`./run.sh --help` prints the list. All of the above were run on 2x MI210 on
+2026-08-04; `bench latency` on the 0.6B model reported `Avg latency: 0.0244 s`.
+
 ## What it sets for you, and why
 
 | setting | value | why |
@@ -127,7 +160,7 @@ Raise it when the model does not fit in one card's 64 GiB, not by default.
 | symptom | cause |
 |---|---|
 | `exec: "/path/to/model": is a directory: permission denied` | The image has **no ENTRYPOINT**; the command must start with `vllm serve`. `run.sh` and `compose.yaml` both do. Hand-written `docker run` invocations hit this. |
-| `the input device is not a TTY` | `docker run -it` under ssh/cron/CI. `run.sh` adds `-it` only when stdin is a terminal. |
+| `the input device is not a TTY` | `docker run -it` under ssh/cron/CI. `run.sh` uses `-i` always and adds `-t` only when stdin is a terminal — dropping `-i` too would silently discard piped input instead. |
 | `max_model_len (N) is greater than the derived max_model_len` | See above — omit the flag. |
 | `Free memory 0.3/63.98 GiB` at startup | Something else is holding VRAM. `docker ps` — a forgotten container is the usual answer, not a leak. |
 | `module_rmsnorm_quant ... build failed` | `VLLM_ROCM_USE_AITER=1` against an image without AITER. Run `build/add-aiter.sh`, or leave it 0. |
