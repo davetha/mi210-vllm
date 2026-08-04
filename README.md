@@ -75,18 +75,11 @@ gate DECLINES block_size 544   Qwen3-Next safety; silently wrong otherwise
 
 ## Known limits
 
-- **Model load needs `--safetensors-load-strategy=eager`** (compose sets it).
-  Without it large MoE checkpoints take hours, because on ROCm `.to(device)` from
-  an mmap-backed tensor costs ~1 s each regardless of size — 14.15 h vs 1.47 min
-  measured on GLM-4.5-Air. `prefetch` does *not* help. See `docs/LOAD-TIME.md`.
+- **Model load needs `GPU_PINNED_MIN_XFER_SIZE=67108864`** (compose sets it).
+  Above HIP's ~1 MiB pin threshold, `.to(device)` page-locks the caller's buffer
+  and `hsa_amd_memory_lock_to_pool` costs ~1 s while the DMA is 14 ms.
+  GLM-4.5-Air: **22 s** with it, hours without. See `docs/LOAD-TIME.md`.
   Unreported upstream.
-- **`moe_wna16.py` is not ported**, so `awq`/`awq_marlin` checkpoints do not get
-  the int4 interleave win. Only `compressed-tensors` does.
-- **No tuned MoE configs ship.** Every one produced here measured neutral or
-  worse across ~13 GPU-hours. `tuning/manifest.json` records why.
-- **Some claims are derived, not measured.** The free-kernel `head_size` rule is
-  measured on gfx90a; its RDNA4 consequence is derived from the same arithmetic
-  and has not been run on hardware. Marked as such where it appears.
 
 ## Licence
 

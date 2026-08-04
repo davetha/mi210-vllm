@@ -1,45 +1,67 @@
 # Model load time on ROCm
 
-**If you load a large MoE checkpoint, pass `--safetensors-load-strategy=eager`.**
-Without it, GLM-4.5-Air takes hours on this hardware. With it, minutes.
+**Set `GPU_PINNED_MIN_XFER_SIZE=67108864` in the container environment.**
+Without it GLM-4.5-Air takes hours on this hardware. With it, 22 seconds.
 
-This is not a tuning preference. It is a work-around for a ROCm behaviour that
-makes the default load path pathologically slow, and it is not documented
-upstream.
+`compose.yaml` sets it. This is a HIP runtime tunable, not a vLLM setting, and
+it is not documented anywhere upstream.
 
 ---
 
-## The measurement
+## The mechanism, end to end
 
-vLLM's default safetensors path yields tensors backed by safetensors' own
-mapping, and then calls `.to(device)` on them. On ROCm that copy costs about
-**one second per tensor, independent of tensor size**.
+`rocprofv3 --hip-trace --hsa-amd-trace` over a single slow copy:
 
-Measured on 2x MI210 (gfx90a), cold tensors from untouched shards of
-`GLM-4.5-Air-AWQ`:
+    hipMemcpyWithStream                     1015.74 ms
+      hsa_amd_memory_lock_to_pool           1001.28 ms   <-- the cost
+      hsa_amd_memory_async_copy_on_engine     14.24 ms   <-- the actual DMA
 
-| source of the CPU tensor | `.to(device)` median |
+`.to(device)` on a host tensor larger than `GPU_PINNED_MIN_XFER_SIZE` makes HIP
+**page-lock the caller's buffer** for DMA rather than staging through a
+pre-pinned one. Locking safetensors' mapping costs a full second. The transfer
+itself is 14 ms.
+
+Raise the threshold above the tensor size and HIP uses the staging path:
+
+    default                          1002.06 ms
+    GPU_PINNED_MIN_XFER_SIZE=64MiB      0.38 ms      2,637x
+
+## Why it lands on MoE checkpoints specifically
+
+The default threshold is between 1 and 2 MiB. Sweeping transfer size against
+safetensors memory:
+
+     1024 KiB     0.30 ms
+     2048 KiB  1000.43 ms
+
+GLM-4.5-Air's expert `qweight` tensors are **2.75 MB** — just over the line.
+There are 16,512 of them, and `16,512 x 1 s = 4.6 h`, which is the load time
+that was actually observed. The `qzeros` and `scales` are 0.02 MB, sail under
+the threshold, and cost nothing.
+
+That is the whole reason this presents as a MoE problem. It is not about MoE, or
+about quantization, or about the number of bytes. It is about how many
+individual transfers land above a 1 MiB threshold. A dense checkpoint has a few
+hundred and loses a couple of minutes; this one has sixteen thousand.
+
+## Measured, on the real model
+
+Same model, same serving path, only the environment differs:
+
+| configuration | GLM-4.5-Air, 15 shards |
 |---|---:|
-| mmap-backed (`safe_open` + `get_tensor`, the default) | **1001.93 ms** |
-| ordinary memory (`eager`, i.e. `load(f.read())`) | **0.24 ms** |
+| default | 3h18m to reach 9/15 |
+| `--safetensors-load-strategy=eager` | 1m 02s |
+| `GPU_PINNED_MIN_XFER_SIZE=64MiB` | **22 s** |
 
-That is a **4,226x** difference on the same data, same GPU, same shard family.
-
-Because the cost is **per tensor and not per byte**, it scales with tensor count:
-
-| checkpoint | expert tensors | projected load |
-|---|---:|---:|
-| GLM-4.5-Air AWQ, default | 50,826 | **14.15 h** |
-| GLM-4.5-Air AWQ, eager | 50,826 | **1.47 min** (including 15 shard reads) |
-
-A dense model has a few hundred tensors and pays a few minutes, which reads as
-"loading is a bit slow". A MoE checkpoint has fifty thousand and pays hours.
-That is why this looked like a MoE bug for a long time. It is not.
+The environment variable is preferred over `eager`. It is faster, it needs no
+extra RAM, and it fixes every host-to-device path rather than only the
+safetensors one. The two compose if you want both.
 
 ## What it is not
 
-Four hypotheses were tested and refuted before the real cause was found. They
-are recorded because each one is plausible and someone will think of them again.
+Five hypotheses were tested and refuted before the real cause was found. They
+are recorded because each is plausible and someone will think of them again.
 
 **Not disk I/O.** Cold sequential read of the checkpoint runs at 1.0-1.5 GiB/s.
 Streaming an entire shard into page cache *before* touching its tensors changed
@@ -110,52 +132,43 @@ Not reported. Searches of `vllm-project/vllm` for slow ROCm safetensors loading
 returned nothing, and PR #46766 ("ModelOpt Llama-4 Checkpoints Take 5+ minutes to
 load") is a different bug — a view-chain in the Llama-4 fused-expert path.
 
-## What the mechanism is, and what is still unknown
-
-Narrowed as far as black-box testing goes. **The cost follows the storage, not
-the tensor wrapper.** Any view of a safetensors tensor is slow; any copy out of
-it is fast:
-
-    safetensors tensor as-is                 1016.24 ms
-      [:] slice        (same storage)        1002.07 ms
-      .view_as         (same storage)        1000.73 ms
-      from_numpy(...)  (same storage)        1001.24 ms
-      .clone()         (new storage)            0.33 ms
-      empty().copy_()  (new storage)            0.52 ms
-
-**It is not simply "file-backed mmap".** Mapping the same shard by hand and
-building a tensor over it with `torch.frombuffer` is fast at every combination
-tested:
+**Not file-backed mmap as such.** Mapping the same shard by hand and building a
+tensor over it with `torch.frombuffer` is fast at every combination:
 
     r--s  read-only  MAP_SHARED     0.61 ms
     r--p  read-only  MAP_PRIVATE    0.53 ms
     rw-s  writable   MAP_SHARED     2.29 ms
     rw-p  writable   MAP_PRIVATE    1.16 ms
 
-`/proc/self/smaps` shows safetensors maps `rw-p` where a hand-rolled read-only
-map is `r--s`, but reproducing `rw-p` by hand does *not* reproduce the slowness.
-So the mapping flags are necessary context, not the trigger.
+`/proc/self/smaps` shows safetensors maps `rw-p` where a hand-rolled map is
+`r--s`, but reproducing `rw-p` by hand does not reproduce the stall. The
+mapping is context; the transfer size crossing the pin threshold is the trigger.
 
-**No syscall accounts for the second.** `strace -f -T` across the slow copy
-shows nothing long except idle worker futexes; the time is spent in userspace
-inside the HIP runtime. Combined with the consistency of the figure (1001.28,
-1001.46, 1001.62, 1001.96 ms) this reads as a poll loop with a one-second
-timeout rather than a bandwidth or fault cost.
+## Alternatives, if the environment variable is unavailable
 
-The exact HIP call is not identified. `AMD_LOG_LEVEL=4` produces no output in
-this build, so naming it needs a runtime with HIP API tracing.
+`--safetensors-load-strategy=eager` reads each shard into ordinary memory before
+deserialising (1m 02s measured, ~5 GiB peak per shard). Cloning each tensor out
+of the mapping before the copy has the same effect at the call site:
+
+```python
+loaded_weight.clone().to(device)   #   0.30 ms
+loaded_weight.to(device)           # 2002 ms
+```
+
+Note that `--safetensors-load-strategy=prefetch` does **not** help. It warms the
+page cache and then falls through to the same path; page cache was never the
+problem.
 
 ## Reporting
 
-There are three places this could go and the evidence does not yet settle which:
+Worth filing in two places, with different asks:
 
-- **vLLM** — actionable today: default to `eager` on ROCm, or document it.
-  This is the report worth filing first, because the fix is known and the repro
-  is two lines.
-- **safetensors** — it maps the checkpoint writable-private though it never
-  writes. Read-only mapping may sidestep whatever the runtime dislikes.
-- **ROCm** — a one-second userspace stall in a host-to-device copy is a runtime
-  bug wherever the trigger lives. Filing this needs the HIP call named first.
+- **vLLM** — set `GPU_PINNED_MIN_XFER_SIZE` on ROCm, or document it. The repro
+  is two lines and the fix costs nothing.
+- **ROCm** — `hsa_amd_memory_lock_to_pool` taking one second to pin a 2.75 MB
+  region is a runtime bug regardless of who calls it. The staging path is
+  2,637x faster for the same transfer, which suggests the lock path is doing
+  something pathological rather than merely being slower.
 
 Minimal reproduction:
 
@@ -163,7 +176,8 @@ Minimal reproduction:
 from safetensors import safe_open
 import torch
 with safe_open(shard, framework="pt") as f:
-    t = f.get_tensor(some_key)
-    t.to("cuda")            # ~1000 ms
-    t.clone().to("cuda")    #    ~0.3 ms
+    t = f.get_tensor(key_of_a_tensor_over_1MiB)
+    t.to("cuda")             # ~1000 ms
+    t.clone().to("cuda")     #    ~0.3 ms
+# or run the whole process with GPU_PINNED_MIN_XFER_SIZE=67108864
 ```

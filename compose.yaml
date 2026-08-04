@@ -25,6 +25,13 @@ services:
       - /dev/dri:/dev/dri
     environment:
       VLLM_ROCM_USE_AITER: "1"
+      # Not optional on ROCm, and not a vLLM setting -- a HIP runtime tunable.
+      # .to(device) on a host tensor above this size makes HIP page-lock the
+      # caller's buffer; hsa_amd_memory_lock_to_pool then costs ~1 s while the
+      # DMA itself is 14 ms. GLM-4.5-Air has 16,512 expert tensors of 2.75 MB,
+      # just over the ~1 MiB default: 22 s to load with this, hours without.
+      # See docs/LOAD-TIME.md.
+      GPU_PINNED_MIN_XFER_SIZE: "${GPU_PINNED_MIN_XFER_SIZE:-67108864}"
       # Point at ONE deployment's folder, never at a flat pile. The tuned-config
       # filename is E=<experts>,N=<intermediate/TP>,device_name=...,dtype=...
       # and does NOT encode K (hidden size). Qwen3-30B at TP=1 and Qwen3-235B at
@@ -44,11 +51,8 @@ services:
       - "${PORT:-8000}:8000"
     command:
       - ${MODEL:?set MODEL in .env}
-      # Not optional on ROCm. The default safetensors path yields mmap-backed
-      # tensors, and .to(device) from a file-backed source costs ~1 s per
-      # tensor regardless of size. GLM-4.5-Air has 50,826 expert tensors:
-      # 14.15 h default vs 1.47 min with eager, measured. See docs/LOAD-TIME.md.
-      # Note prefetch does NOT help -- it warms page cache then still uses mmap.
+      # Belt and braces with GPU_PINNED_MIN_XFER_SIZE above. Set to "auto" to
+      # rely on the env var alone; eager costs ~5 GiB peak per shard.
       - --safetensors-load-strategy
       - "${SAFETENSORS_LOAD_STRATEGY:-eager}"
       - --host
