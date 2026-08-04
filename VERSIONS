@@ -9,8 +9,13 @@ BASE_IMAGE=rocm/vllm@sha256:ac1be45dac88db3fd32c1aa45ecd043c0efad7a809c1bcb36960
 BASE_IMAGE_TAG_FYI=rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0
 
 VLLM_FORK=https://github.com/davetha/vllm
-VLLM_REF=v0.26.1rc0-mi210.1   # tagged 2026-08-04
+VLLM_REF=v0.26.1rc0+mi210.1   # PEP 440 local version; see build note below
 VLLM_UPSTREAM_BASE=v0.26.1rc0
+# The '+' is required, not cosmetic. vLLM builds its version with
+# setuptools_scm, which parses the git tag; a tag like v0.26.1rc0-mi210.1 is
+# not valid PEP 440 and fails metadata generation with
+#   ValueError: Can't parse version from tag
+# '+mi210.1' is a local version identifier: version 0.26.1rc0, locally modified.
 
 # Upstream AITER, unmodified. The fork davetha/aiter exists but carries no
 # gfx90a patches -- the gfx90a work is not source changes to AITER, it is
