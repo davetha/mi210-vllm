@@ -24,7 +24,12 @@ services:
       - /dev/kfd:/dev/kfd
       - /dev/dri:/dev/dri
     environment:
-      VLLM_ROCM_USE_AITER: "1"
+      # OFF by default, and that is deliberate. The core image built by
+      # build/build.sh contains no AITER: with this set to 1, vLLM asks AITER's
+      # JIT to build a module against whatever AITER the base image shipped,
+      # which fails to compile and takes engine startup down with it. Run
+      # build/add-aiter.sh, then set this to 1.
+      VLLM_ROCM_USE_AITER: "${VLLM_ROCM_USE_AITER:-0}"
       # Not optional on ROCm, and not a vLLM setting -- a HIP runtime tunable.
       # .to(device) on a host tensor above this size makes HIP page-lock the
       # caller's buffer; hsa_amd_memory_lock_to_pool then costs ~1 s while the

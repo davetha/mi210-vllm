@@ -102,6 +102,12 @@ else
     HW_VALIDATED=false
 fi
 
+# NOTE on scope. These tiers are unit-level. They all passed on an image that
+# then failed to start an engine, because compose set VLLM_ROCM_USE_AITER=1
+# against an image with no AITER and vLLM tried to JIT-build a module that does
+# not compile. A serve smoke test belongs here; until it exists, run one by
+# hand before publishing a digest. Recorded rather than left implicit.
+
 # Claims carried by this image that hardware here cannot check. Recorded, never
 # asserted -- an untested claim stated as fact is how a project loses trust.
 cat >> /tmp/unvalidated.txt <<'UNVAL'
