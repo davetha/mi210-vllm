@@ -4,9 +4,11 @@ Deployment stack for running vLLM on 2x AMD Instinct MI210. It carries the
 patches this hardware needs — several upstream, several local — pinned, verified
 at build time, and documented with the measurements that justify them.
 
-> **Status: scaffold.** The layout, build gates, patch registry and tuning
-> manifest are real. `DERIVED_IMAGE` is empty until a verified build runs, and
-> `VERSIONS` references fork tags that do not exist yet. Do not deploy this yet.
+> **Status: builds and verifies.** Built on 2x MI210 on 2026-08-04; all three
+> verification tiers pass with `hardware_validated=true` (23 numeric tests).
+> `DERIVED_IMAGE` in `VERSIONS` is still empty because the image has not been
+> pushed to a registry — run `build/build.sh` to produce your own, or publish
+> one and record its digest.
 
 ---
 
@@ -77,9 +79,25 @@ gate DECLINES block_size 544   Qwen3-Next safety; silently wrong otherwise
 ## Building it
 
 ```bash
-./build/build.sh                 # no GPU required; builds anywhere
-./build/add-aiter.sh <image>     # optional, requires gfx90a cards
+./build/build.sh local/vllm-mi210:dev    # no GPU needed to build
+./build/add-aiter.sh local/vllm-mi210:dev  # optional, requires gfx90a cards
 ```
+
+`build.sh` runs tier 0 inside the build, then tiers 1-2 against the cards, and
+records the digest in `VERSIONS` only if everything passes. The qualification
+record it writes looks like this:
+
+```json
+{ "result": "pass", "max_tier": 2, "arch": "gfx90a:sramecc+:xnack-",
+  "hardware_validated": true,
+  "unvalidated_claims": [
+    "gfx12/RDNA4 head_size rule: derived from constexpr, not measured",
+    "gfx942 block_size behaviour: inferred from upstream test cases, not measured"
+  ] }
+```
+
+`hardware_validated` is false when the build host has no GPU, and the claims
+this hardware cannot check are listed rather than asserted.
 
 The core image needs no GPU to build, which matters because most people who
 want it do not have a spare MI210 to build it on. Every patch this project
