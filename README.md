@@ -85,10 +85,20 @@ gate DECLINES block_size 544   Qwen3-Next safety; silently wrong otherwise
 ```
 
 Serves an OpenAI-compatible API on `:8000`. Needs only `docker run` — no compose
-plugin, no config file. `compose.yaml` is the other way in, for a deployment you
-run repeatedly. Both are covered in [docs/RUNNING.md](docs/RUNNING.md), along
-with the settings that are not optional on ROCm and the errors worth
-recognising.
+plugin, no config file.
+
+The rest of the CLI is there too, with the GPUs, mounts and ROCm environment
+already correct:
+
+```bash
+./run.sh bench latency --model /path/to/model
+./run.sh complete --url http://localhost:8000/v1 --model /path/to/model --quick "hello"
+./run.sh exec probe-image-patches      # or shell, or any command
+```
+
+`compose.yaml` is the other way in, for a deployment you run repeatedly. Both
+are covered in [docs/RUNNING.md](docs/RUNNING.md), along with the settings that
+are not optional on ROCm and the errors worth recognising.
 
 On an HPC site without Docker, see [docs/APPTAINER.md](docs/APPTAINER.md) —
 Frontier's MI250X is gfx90a, the same architecture this image targets.
