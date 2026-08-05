@@ -36,3 +36,9 @@ DERIVED_IMAGE=
 # AITER's JIT resolves against this exact Triton; a mismatch silently disables
 # the ASM paths rather than erroring.
 TRITON_PIN=3.7.1
+
+# llm-compressor, for build/add-convert.sh only -- never in the serving image.
+# 0.12.0.1 (the current release) pins transformers<=5.10.1, which conflicts with
+# the 5.14.0 vLLM is built against; this alpha drops the upper bound. Installed
+# with --no-deps and patched for Python 3.14 (build/patch_llmcompressor_py314.py).
+LLMCOMPRESSOR_REF=0.12.1a20260701

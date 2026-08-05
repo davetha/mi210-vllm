@@ -3,16 +3,22 @@
 #
 #   ./build/add-convert.sh <input-image> [output-image]
 #
-# Separate from the serving image on purpose. llm-compressor depends on torch
-# and transformers, so installing it can move the versions vLLM was built
-# against -- and a serving image with a drifted torch is exactly the failure
-# this project guards against. vllm-radiance shipped multi-GPU hangs for five
-# releases from precisely that cause.
+# Kept out of the serving image by default because a quantizer is not something
+# a serving image needs, and because a plain `pip install llmcompressor` moves
+# torch/transformers -- a serving image with a drifted stack is the failure this
+# project guards against, and it cost vllm-radiance five releases of multi-GPU
+# hangs. Two measures make adding it safe rather than hopeful:
 #
-# So: install, then ASSERT that torch and transformers did not move. If they
-# did, the image is rejected rather than published.
+#   --no-deps        llm-compressor's requirements are already satisfied by the
+#                    image, so resolving them again only risks moving them.
+#                    Verified: torch/transformers/compressed-tensors unchanged.
+#   a 3-line patch   llmcompressor 0.12.0.1 does not import on Python 3.14; see
+#                    build/patch_llmcompressor_py314.py for the why.
+#
+# Both are then ASSERTED, so this fails loudly if either stops holding.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+set -a; . ./VERSIONS; set +a
 
 IN="${1:?usage: add-convert.sh <input-image> [output-image]}"
 OUT="${2:-${IN%%:*}:convert}"
@@ -31,49 +37,71 @@ BEFORE=$(docker run --rm --entrypoint python3 "$IN" -c "$VERSIONS_PY")
 echo "=== before : torch/transformers/compressed-tensors $BEFORE"
 
 docker run -d --name "$C" --entrypoint sleep "$IN" infinity >/dev/null
+docker cp build/patch_llmcompressor_py314.py "$C:/tmp/patch_lc.py" >/dev/null
 
-# No --no-deps: llm-compressor genuinely needs its dependency tree. The two
-# assertions below are what make that safe, rather than hoping.
-docker exec "$C" bash -lc "python3 -m pip install --quiet llmcompressor 2>&1 | tail -3" || true
+docker exec "$C" bash -lc "
+  set -e
+  python3 -m pip install --quiet --no-deps llmcompressor==${LLMCOMPRESSOR_REF} 2>&1 | tail -3
+  python3 /tmp/patch_lc.py
+  rm -f /tmp/patch_lc.py
+"
 
-# Assertion 1: it has to actually import. Installing cleanly is not the same
-# as working -- on Python 3.14 it installs and then dies in pydantic's
-# forward-reference evaluation.
+# Assertion 1: it imports. Installing cleanly is not the same as working -- on
+# Python 3.14 it installs and then dies in pydantic's annotation evaluation.
 if ! docker exec "$C" python3 -c \
     'import llmcompressor; print("llmcompressor", llmcompressor.__version__)'; then
   echo >&2
-  echo "REJECTED: llmcompressor installed but does not import in this image." >&2
-  echo "  Measured on 2026-08-04 against the rocm/vllm 0.23 base (Python 3.14):" >&2
-  echo "  pydantic 2.13.4 (latest) fails to evaluate 'dict[str, Any]' under 3.14's" >&2
-  echo "  annotationlib, so the import raises TypeError before anything runs." >&2
-  echo >&2
-  echo "  Nothing was committed. Run the generated quantize.py somewhere with a" >&2
-  echo "  Python that llm-compressor supports -- it is a standalone script and" >&2
-  echo "  does not depend on this image." >&2
+  echo "REJECTED: llmcompressor still does not import after the 3.14 patch." >&2
+  echo "  Nothing was committed. The generated quantize.py is standalone -- run" >&2
+  echo "  it wherever llm-compressor works." >&2
   exit 1
 fi
 
+# Assertion 2: everything the generated recipe imports actually resolves.
+# --no-deps means a genuinely missing dependency would otherwise surface hours
+# into a calibration run rather than here.
+if ! docker exec "$C" python3 -c '
+from llmcompressor import oneshot
+from llmcompressor.modifiers.quantization import GPTQModifier
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from datasets import load_dataset
+GPTQModifier(targets="Linear", scheme="W4A16", ignore=["lm_head"])
+print("recipe imports OK")'; then
+  echo >&2
+  echo "REJECTED: --no-deps left something the generated recipe needs missing." >&2
+  exit 1
+fi
+
+# Assertion 3: nothing vLLM was built against may move, and vLLM still loads.
 AFTER=$(docker exec "$C" python3 -c "$VERSIONS_PY")
 echo "=== after  : torch/transformers/compressed-tensors $AFTER"
-
-# Assertion 2: nothing vLLM was built against may move.
 if [ "$BEFORE" != "$AFTER" ]; then
   echo >&2
   echo "REJECTED: installing llmcompressor moved the stack." >&2
   echo "  before: $BEFORE" >&2
   echo "  after : $AFTER" >&2
-  echo >&2
-  echo "vLLM in this image was built against the first set. Measured here, the" >&2
-  echo "install downgraded transformers 5.14.0 -> 5.10.1 and bumped" >&2
-  echo "compressed-tensors past vllm's ==0.17.0 pin. A serving image with a" >&2
-  echo "drifted stack is the failure this project guards against: vllm-radiance" >&2
-  echo "shipped multi-GPU hangs across five releases from exactly this." >&2
+  echo "vLLM in this image was built against the first set." >&2
+  exit 1
+fi
+docker exec "$C" python3 -c 'import vllm; print("vllm still imports:", vllm.__version__)'
+
+# --change restores the entrypoint. `docker commit` snapshots the CONTAINER's
+# config, and this container was started with `--entrypoint sleep` to keep it
+# alive -- without this the committed image runs `sleep "$@"` and every
+# invocation dies with `sleep: unrecognized option '--to'`.
+ENTRY=$(docker inspect "$IN" --format '{{json .Config.Entrypoint}}')
+docker commit --change "ENTRYPOINT ${ENTRY}" "$C" "$OUT" >/dev/null
+
+# Assertion 4: the committed image dispatches like its parent.
+GOT=$(docker inspect "$OUT" --format '{{json .Config.Entrypoint}}')
+if [ "$GOT" != "$ENTRY" ]; then
+  echo "REJECTED: entrypoint not preserved (want $ENTRY, got $GOT)" >&2
+  docker rmi "$OUT" >/dev/null 2>&1 || true
   exit 1
 fi
 
-docker commit "$C" "$OUT" >/dev/null
 echo
-echo "=== built $OUT  (torch/transformers unchanged)"
+echo "=== built $OUT  (stack unchanged, quantizer working, entrypoint $GOT)"
 echo "Convert with:"
 echo "  docker run --rm -it --device /dev/kfd --device /dev/dri --group-add video \\"
 echo "    -v /path/to/models:/models $OUT \\"

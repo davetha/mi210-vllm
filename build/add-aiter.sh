@@ -68,7 +68,14 @@ docker exec "$C" bash -lc "
 "
 
 docker exec "$C" bash -lc "rm -rf /src/aiter /src/aiter-cdna2"
-docker commit "$C" "$OUT" >/dev/null
+# --change restores the entrypoint. `docker commit` snapshots the CONTAINER's
+# config, and this container was started with `--entrypoint sleep` to keep it
+# alive -- without this the committed image runs `sleep "$@"` and every
+# invocation dies with `sleep: unrecognized option ...`.
+ENTRY=$(docker inspect "$IN" --format '{{json .Config.Entrypoint}}')
+docker commit --change "ENTRYPOINT ${ENTRY}" "$C" "$OUT" >/dev/null
+GOT=$(docker inspect "$OUT" --format '{{json .Config.Entrypoint}}')
+[ "$GOT" = "$ENTRY" ] || { echo "entrypoint not preserved: want $ENTRY, got $GOT" >&2; exit 1; }
 echo "=== built $OUT"
 echo "=== verifying on the cards ==="
 docker run --rm --device=/dev/kfd --device=/dev/dri --group-add video --ipc=host \
