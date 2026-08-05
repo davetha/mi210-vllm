@@ -190,11 +190,33 @@ rebuild this" and "anyone with an MI210 can rebuild this".
 
 ## Known limits
 
-- **Model load needs `GPU_PINNED_MIN_XFER_SIZE=67108864`** (compose sets it).
+- **Model load needs `GPU_PINNED_MIN_XFER_SIZE=67108864`** (the image bakes it in).
   Above HIP's ~1 MiB pin threshold, `.to(device)` page-locks the caller's buffer
   and `hsa_amd_memory_lock_to_pool` costs ~1 s while the DMA is 14 ms.
   GLM-4.5-Air: **22 s** with it, hours without. See `docs/LOAD-TIME.md`.
   Unreported upstream.
+
+- **`model-convert --run` cannot quantize inside this image.** It writes the
+  recipe and stops. Two independent blockers, both measured 2026-08-04 against
+  the `rocm/vllm` 0.23 base:
+
+  1. `llmcompressor` installs but does not import on that base's **Python 3.14** —
+     pydantic 2.13.4 (the current release) fails to evaluate `dict[str, Any]`
+     under 3.14's `annotationlib`.
+  2. Installing it **downgrades transformers 5.14.0 → 5.10.1** and moves
+     compressed-tensors past vLLM's `==0.17.0` pin.
+
+  Either alone disqualifies it from a serving image, so this is a deliberate
+  refusal rather than a missing feature — `build/add-convert.sh` asserts both
+  and exits 1 rather than committing a drifted image. The generated
+  `quantize.py` is standalone: run it anywhere llm-compressor works, then serve
+  the result here. Both conditions are re-checked on every run, so this
+  resolves itself when the base image's Python moves. See `docs/RUNNING.md`.
+
+- **The int4 interleave path is compressed-tensors only.** AWQ and GPTQ MoE
+  checkpoints do not reach it; the port to `moe_wna16.py` is not done, so those
+  miss a measured 1.45–4.8x on the int4 MoE kernel. `model-fastpath` tells you
+  which side of this a given checkpoint falls on.
 
 ## Licence
 
