@@ -185,8 +185,85 @@ def patch_sparse_metadata() -> int:
     return 0
 
 
+def patch_enable_mla() -> int:
+    """Route is_mla_enabled through the gfx90a attention carve-out.
+
+    aiter-cdna2 added is_aiter_attention_supported() -- deliberately broader
+    than is_aiter_found_and_supported(), and deliberately only for attention --
+    because AITER's hand-written gfx9 ASM attention kernels do run on gfx90a
+    once the code objects exist. is_mha_enabled already uses it; is_mla_enabled
+    still uses the narrow predicate and so returns None, leaving
+    torch.ops.vllm.rocm_aiter_mla_decode_fwd unregistered.
+
+    The repatcher does emit gfx90a mla code objects. But aiter-cdna2's own
+    port-matrix.md is explicit about the state:
+
+        mla: 24 kernels, 11 portable, 13 blocked (fp8)
+        "mla (11 portable kernels) is not yet enabled or validated."
+
+    So this flips a switch on kernels that have been PORTED but never CHECKED.
+    A wrong MLA decode does not raise -- it returns plausible, wrong
+    attention. Treat any output from this as unvalidated until it has been
+    compared against a non-AITER reference.
+    """
+    f = locate("vllm", "_aiter_ops.py")
+    src = f.read_text()
+    if "MARKER-mla" in src:
+        print("  mla: already enabled")
+        return 0
+
+    needle = (
+        "    @classmethod\n"
+        "    @if_aiter_supported\n"
+        "    def is_mla_enabled(cls) -> bool:\n"
+    )
+    if needle not in src:
+        print("error: is_mla_enabled's decorator not found as expected; "
+              "refusing to guess", file=sys.stderr)
+        return 2
+
+    src = src.replace(needle, (
+        "    @classmethod\n"
+        "    # MARKER-mla " + MARKER + ": use the gfx90a attention carve-out, the\n"
+        "    # same predicate is_mha_enabled uses. UNVALIDATED -- see\n"
+        "    # aiter-cdna2 port-matrix.md: 11 of 24 mla kernels are portable and\n"
+        "    # none have been checked on this arch.\n"
+        "    @if_aiter_attention_supported\n"
+        "    def is_mla_enabled(cls) -> bool:\n"
+    ), 1)
+    # register_ops_once() carries the narrow predicate too, so on gfx90a NO
+    # aiter ops are registered and torch.ops.vllm.rocm_aiter_mla_decode_fwd
+    # never exists regardless of is_mla_enabled. Registration only makes the
+    # symbol available -- the is_*_enabled predicates still decide what is
+    # actually called -- so broadening it does not enable any unvalidated path
+    # by itself.
+    reg = (
+        "    @staticmethod\n"
+        "    @if_aiter_supported\n"
+        "    def register_ops_once() -> None:\n"
+    )
+    if reg not in src:
+        print("error: register_ops_once decorator not found as expected; "
+              "refusing to guess", file=sys.stderr)
+        return 2
+    src = src.replace(reg, (
+        "    @staticmethod\n"
+        "    # " + MARKER + ": register the op symbols on gfx90a. Which of them\n"
+        "    # may actually run is still decided by the is_*_enabled predicates.\n"
+        "    @if_aiter_attention_supported\n"
+        "    def register_ops_once() -> None:\n"
+    ), 1)
+
+    f.write_text(src)
+    print(f"  mla: enabled + ops registered in {f.name} (UNVALIDATED)")
+    return 0
+
+
 def main() -> int:
     rc = patch_sparse_metadata()
+    if rc:
+        return rc
+    rc = patch_enable_mla()
     if rc:
         return rc
     f = locate("vllm", "model_executor", "layers", "sparse_attn_indexer.py")

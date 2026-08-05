@@ -205,6 +205,12 @@ rebuild this" and "anyone with an MI210 can rebuild this".
   Verified end to end on 2026-08-05: a self-quantized W4A16 model served and
   answered correctly. See `docs/RUNNING.md`.
 
+- **GLM-5.2 (DSA sparse attention) runs, at 0.81 tok/s.** Five blockers were
+  cleared to get there; the recipe, the patches and the honest limits are in
+  [docs/DSA-GFX90A.md](docs/DSA-GFX90A.md). It needs ~420 GB of host RAM and a
+  `--memory` cgroup cap (without one, an overshoot takes the whole box down).
+  Treat it as proof the architecture runs on CDNA2, not as a deployment.
+
 - **The int4 interleave path is compressed-tensors only.** AWQ and GPTQ MoE
   checkpoints do not reach it; the port to `moe_wna16.py` is not done, so those
   miss a measured 1.45–4.8x on the int4 MoE kernel. `model-fastpath` tells you
