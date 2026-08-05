@@ -33,6 +33,23 @@ RESET, BOLD, RED, GREEN, YELLOW, DIM = (
     else ("\033[0m", "\033[1m", "\033[31m", "\033[32m", "\033[33m", "\033[2m")
 )
 
+# Three states, carried by the text and not only by colour, so the meaning
+# survives a pipe, a log file and NO_COLOR.
+#
+#   OK   hits an accelerated path, or is the best available here
+#   MID  correct, but leaving something on the table -- a working fallback,
+#        or a format that misses a fast path it could have hit
+#   BAD  this hardware cannot do the thing at all
+#
+# MID is the interesting one and it is deliberately not red: falling back to
+# Triton because a guard declined a shape is the guard WORKING. Flagging that
+# as a failure would train people to ignore the marker that matters.
+OK, MID, BAD = (
+    f"{GREEN}[ OK ]{RESET}",
+    f"{YELLOW}[ ~~ ]{RESET}",
+    f"{RED}[ !! ]{RESET}",
+)
+
 
 def die(msg: str) -> NoReturn:
     print(f"{RED}error:{RESET} {msg}", file=sys.stderr)
@@ -185,6 +202,11 @@ def report(ref: str, f: dict, rocm, tp: int) -> dict:
     arch = getattr(rocm, "_GCN_ARCH", None) or "unknown"
     on_gfx90a = getattr(rocm, "_ON_GFX90A", False)
     out: dict = {"model": ref, "arch": arch, "facts": f, "attention": {}, "notes": []}
+    tally = {OK: 0, MID: 0, BAD: 0}
+
+    def line(status: str, text: str) -> None:
+        tally[status] += 1
+        print(f"  {status}  {text}")
 
     print(f"{BOLD}{ref}{RESET}")
     print(
@@ -192,11 +214,13 @@ def report(ref: str, f: dict, rocm, tp: int) -> dict:
         f"heads {f['heads']}/{f['kv_heads']}  head_size {f['head_size']}  "
         f"dtype {f['dtype']}"
     )
-    print(f"  running on {arch}")
-    if not on_gfx90a:
-        print(
-            f"  {YELLOW}note{RESET} this report is for gfx90a; the gates below "
-            "are being evaluated on a different architecture"
+    if on_gfx90a:
+        line(OK, f"running on {arch}")
+    else:
+        line(
+            BAD,
+            f"running on {arch} -- this report describes gfx90a, and the gates "
+            "below are being evaluated somewhere else",
         )
     print()
 
@@ -204,14 +228,15 @@ def report(ref: str, f: dict, rocm, tp: int) -> dict:
     print(f"{BOLD}attention{RESET}")
     hs, heads, kvh = f["head_size"], f["heads"], f["kv_heads"]
     if not (hs and heads and kvh):
-        print(f"  {YELLOW}cannot evaluate{RESET}: config lacks head/hidden sizes")
+        line(MID, "cannot evaluate: config lacks head/hidden sizes")
         out["notes"].append("attention not evaluated: incomplete config")
     else:
         gqa = heads // kvh
         if not 1 <= gqa <= 16:
-            print(
-                f"  {YELLOW}gqa_ratio {gqa}{RESET} is outside the custom kernel's "
-                "1..16 range; it will use Triton at every block size"
+            line(
+                MID,
+                f"gqa_ratio {gqa} is outside the custom kernel's 1..16 range; "
+                "Triton at every block size",
             )
         for bs in BLOCK_SIZES:
             ok = rocm.use_rocm_custom_paged_attention(
@@ -230,8 +255,10 @@ def report(ref: str, f: dict, rocm, tp: int) -> dict:
                 else:
                     why = "declined by the gate"
             kind = "free kernel" if free else "specialised kernel"
-            mark = f"{GREEN}custom PA{RESET}" if ok else f"{DIM}Triton{RESET}   "
-            print(f"  block_size {bs:>4}  {mark}  {kind if ok else why}")
+            detail = f"custom PA, {kind}" if ok else why
+            # A declined shape is MID, never BAD: the guard sending it to Triton
+            # is the guard doing its job, and the answer stays correct.
+            line(OK if ok else MID, f"block_size {bs:>4}   {detail}")
             out["attention"][bs] = {"custom_paged_attention": ok, "reason": why or kind}
 
     # ------------------------------------------------------------ context ----
@@ -240,12 +267,13 @@ def report(ref: str, f: dict, rocm, tp: int) -> dict:
         print()
         print(f"{BOLD}context{RESET}")
         if mp > 131072:
-            print(
-                f"  {GREEN}{mp} tokens{RESET} needs the multi-pass reduction in "
-                "this image; stock vLLM caps at 131072 on this path"
+            line(
+                OK,
+                f"{mp} tokens -- needs the multi-pass reduction in this image; "
+                "stock vLLM caps at 131072 on this path",
             )
         else:
-            print(f"  {mp} tokens, within the single-pass range")
+            line(OK, f"{mp} tokens, within the single-pass range")
 
     # -------------------------------------------------------- quantization ---
     print()
@@ -255,13 +283,13 @@ def report(ref: str, f: dict, rocm, tp: int) -> dict:
     recs: list[str] = []
 
     if not method:
-        print(f"  none ({f['dtype']}) -- runs natively, no quantization fast path")
+        line(MID, f"none ({f['dtype']}) -- runs natively, no quantization fast path")
     elif "fp8" in (method or "") or "fp8" in (fmt or ""):
-        print(
-            f"  {RED}fp8{RESET} -- MI210 is CDNA2 and has {BOLD}no FP8 datapath{RESET}. "
-            "CDNA3 (MI300) introduced it."
+        line(
+            BAD,
+            "fp8 -- MI210 is CDNA2 and has no FP8 datapath (CDNA3/MI300 introduced "
+            "it). It may load; there is no hardware acceleration to hit.",
         )
-        print("  The checkpoint may load, but there is no hardware acceleration to hit.")
         recs.append(
             "Prefer an int4 (AWQ / GPTQ / compressed-tensors W4A16) or int8 W8A8 "
             "export of the same model. Both have hardware support on gfx90a; fp8 does not."
@@ -269,43 +297,50 @@ def report(ref: str, f: dict, rocm, tp: int) -> dict:
     elif bits == 4:
         scheme = f["quant_scheme"] or "W4A?"
         if method == "compressed-tensors" and f["quant_act_bits"] == 16:
-            print(f"  {GREEN}compressed-tensors {scheme}{RESET}")
             if is_moe:
-                print(
-                    "  MoE W4A16 hits the int4 interleave path this image widens to "
-                    "GFX9 (measured 1.45-4.8x on the int4 MoE kernel, bit-identical)."
+                line(
+                    OK,
+                    f"compressed-tensors {scheme} -- MoE hits the int4 interleave path "
+                    "this image widens to GFX9 (1.45-4.8x on the int4 MoE kernel, "
+                    "bit-identical)",
                 )
             else:
-                print("  Dense int4. The interleave patch is MoE-only, so it does not apply.")
+                line(
+                    OK,
+                    f"compressed-tensors {scheme} -- dense int4; the interleave patch "
+                    "is MoE-only, so it does not apply",
+                )
         elif method == "compressed-tensors":
-            print(f"  {YELLOW}compressed-tensors {scheme}{RESET}")
-            print(
-                "  4-bit weights with quantised activations take the int-quantized "
-                "path, not the wNa16 path the interleave patch widens."
+            line(
+                MID,
+                f"compressed-tensors {scheme} -- 4-bit weights with quantised "
+                "activations take the int-quantized path, not the wNa16 path the "
+                "interleave patch widens",
             )
             if is_moe:
                 recs.append(
                     "W4A16 (16-bit activations) would reach the int4 interleave kernel; "
                     f"{scheme} does not. Worth comparing if this model is MoE-bound."
                 )
+        elif is_moe:
+            line(
+                MID,
+                f"{method} 4-bit -- misses the int4 interleave fast path. That patch "
+                "lives in the compressed-tensors MoE path; the awq/gptq path "
+                "(moe_wna16.py) has not been ported.",
+            )
+            recs.append(
+                "A compressed-tensors W4A16 export of this model would hit the int4 "
+                "interleave path (1.45-4.8x on the int4 MoE kernel, bit-identical). "
+                "Same weights, different packing -- `model-convert --to W4A16`."
+            )
         else:
-            print(f"  {YELLOW}{method} 4-bit{RESET}")
-            if is_moe:
-                print(
-                    f"  {YELLOW}This misses the int4 interleave fast path.{RESET} That patch "
-                    "lives in the compressed-tensors MoE path; the awq/gptq path "
-                    "(moe_wna16.py) has not been ported."
-                )
-                recs.append(
-                    "A compressed-tensors W4A16 export of this model would hit the int4 "
-                    "interleave path (1.45-4.8x on the int4 MoE kernel, bit-identical). "
-                    "Same weights, different packing -- `model-convert --to W4A16`."
-                )
+            line(OK, f"{method} 4-bit, dense -- the interleave patch is MoE-only")
     elif bits == 8:
         scheme = f["quant_scheme"] or "8-bit"
-        print(f"  {GREEN}{method} {scheme}{RESET} -- int8 has hardware support on gfx90a")
+        line(OK, f"{method} {scheme} -- int8 has hardware support on gfx90a")
     else:
-        print(f"  {method} (bits={bits}) -- no specific verdict for this combination")
+        line(MID, f"{method} (bits={bits}) -- no specific verdict for this combination")
         out["notes"].append(f"unrecognised quantization: {method}/{bits}")
 
     # ---------------------------------------------------------------- MoE ----
@@ -313,19 +348,32 @@ def report(ref: str, f: dict, rocm, tp: int) -> dict:
         print()
         print(f"{BOLD}MoE{RESET}")
         E, inter = f["experts"], f["moe_intermediate"]
-        print(f"  {E} experts, moe_intermediate_size {inter}")
+        print(f"         {E} experts, moe_intermediate_size {inter}")
         if inter and tp:
             N = inter // tp
-            print(f"  at TP={tp} the tuned-config key is E={E},N={N}")
-            print(
-                f"  {DIM}the filename does not encode K (hidden={f['hidden']}), so a "
-                f"folder holding another model's E={E},N={N} config would be "
-                f"silently misapplied -- see tuning/README.md{RESET}"
+            line(
+                MID,
+                f"at TP={tp} the tuned-config key is E={E},N={N}, and the filename "
+                f"does not encode K (hidden={f['hidden']}) -- a folder holding "
+                f"another model's E={E},N={N} would be silently misapplied",
             )
         recs.append(
             "Tuned fused_moe configs measured neutral or worse on this hardware "
             "across ~13 GPU-hours. Start untuned; see tuning/manifest.json."
         )
+
+    # ------------------------------------------------------------- summary ---
+    print()
+    print(f"{BOLD}summary{RESET}")
+    print(
+        f"  {OK} {tally[OK]} good    {MID} {tally[MID]} could be better    "
+        f"{BAD} {tally[BAD]} unsupported here"
+    )
+    print(
+        f"  {DIM}[ ~~ ] is not a failure: a shape routed to Triton is the guard "
+        f"working, and the answer stays correct.{RESET}"
+    )
+    out["summary"] = {"ok": tally[OK], "mid": tally[MID], "bad": tally[BAD]}
 
     # ------------------------------------------------------ recommendations --
     print()

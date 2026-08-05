@@ -68,40 +68,68 @@ revision in it is honoured rather than discarded. Local paths are mounted into
 the container automatically — `run.sh` mounts every argument that names a path
 on your machine, so no `-v` is needed.
 
+Every line carries one of three states, in the text as well as the colour so it
+survives a pipe, a log file and `NO_COLOR`:
+
+| | |
+|---|---|
+| `[ OK ]` | hits an accelerated path, or is the best available here |
+| `[ ~~ ]` | correct, but leaving something on the table |
+| `[ !! ]` | this hardware cannot do it at all |
+
+`[ ~~ ]` is deliberately not red. A shape routed to Triton because a guard
+declined it is **the guard working** — the answer stays correct, it just is not
+the fast kernel. Painting that red would train people to ignore the marker that
+does matter.
+
 A full run, against a compressed-tensors W4A16 MoE checkpoint:
 
 ```
 $ ./run.sh exec model-fastpath /mnt/models/glm-awq --tp 2
 
 /mnt/models/glm-awq
-  glm4_moe  92 layers  hidden 5120  heads 96/8  head_size 128  dtype unknown
-  running on gfx90a
+  glm4_moe  92 layers  hidden 5120  heads 96/8  head_size 128
+  [ OK ]  running on gfx90a
 
 attention
-  block_size   16  custom PA  specialised kernel
-  block_size   32  custom PA  specialised kernel
-  block_size   64  custom PA  free kernel
-  block_size  128  Triton     block_size > 64 is wrong on gfx90a; routed to Triton
-  block_size  544  Triton     block_size > 64 is wrong on gfx90a; routed to Triton
+  [ OK ]  block_size   16   custom PA, specialised kernel
+  [ OK ]  block_size   32   custom PA, specialised kernel
+  [ OK ]  block_size   64   custom PA, free kernel
+  [ ~~ ]  block_size  128   block_size > 64 is wrong on gfx90a; routed to Triton
+  [ ~~ ]  block_size  544   block_size > 64 is wrong on gfx90a; routed to Triton
 
 context
-  202752 tokens needs the multi-pass reduction in this image; stock vLLM caps
-  at 131072 on this path
+  [ OK ]  202752 tokens -- needs the multi-pass reduction in this image; stock
+          vLLM caps at 131072 on this path
 
 quantization
-  compressed-tensors W4A16
-  MoE W4A16 hits the int4 interleave path this image widens to GFX9
-  (measured 1.45-4.8x on the int4 MoE kernel, bit-identical).
+  [ OK ]  compressed-tensors W4A16 -- MoE hits the int4 interleave path this
+          image widens to GFX9 (1.45-4.8x on the int4 MoE kernel, bit-identical)
 
 MoE
-  160 experts, moe_intermediate_size 1536
-  at TP=2 the tuned-config key is E=160,N=768
-  the filename does not encode K (hidden=5120), so a folder holding another
-  model's E=160,N=768 config would be silently misapplied
+         160 experts, moe_intermediate_size 1536
+  [ ~~ ]  at TP=2 the tuned-config key is E=160,N=768, and the filename does not
+          encode K (hidden=5120) -- a folder holding another model's
+          E=160,N=768 would be silently misapplied
+
+summary
+  [ OK ] 6 good    [ ~~ ] 3 could be better    [ !! ] 0 unsupported here
 
 recommendations
   - Tuned fused_moe configs measured neutral or worse on this hardware across
     ~13 GPU-hours. Start untuned; see tuning/manifest.json.
+```
+
+An FP8 checkpoint is the case that earns `[ !! ]`, since no setting on this card
+fixes it:
+
+```
+quantization
+  [ !! ]  fp8 -- MI210 is CDNA2 and has no FP8 datapath (CDNA3/MI300 introduced
+          it). It may load; there is no hardware acceleration to hit.
+
+summary
+  [ OK ] 5 good    [ ~~ ] 3 could be better    [ !! ] 1 unsupported here
 ```
 
 The verdicts come from calling **vLLM's own predicates in the image**, not from
