@@ -11,6 +11,58 @@ Everything on this page was run end-to-end on 2x MI210 on 2026-08-04 against
 
 ---
 
+## Without this repo
+
+`run.sh` is a convenience, not a requirement. The image dispatches for itself,
+so it works the same under plain `docker run`, Kubernetes or Slurm:
+
+```bash
+docker run --rm --device /dev/kfd --device /dev/dri --group-add video \
+  --ipc host --shm-size 16G --security-opt seccomp=unconfined \
+  -p 8000:8000 -v /mnt/models:/mnt/models:ro -v ./cache:/cache \
+  <image> /mnt/models/my-model --tensor-parallel-size 2
+```
+
+```bash
+<image> /mnt/models/my-model     # a model path serves
+<image> bench latency --model …  # a subcommand runs that subcommand
+<image> bash                     # an executable is exec'd
+```
+
+The settings that are not optional on ROCm are **baked into the image**, not
+into this script — `GPU_PINNED_MIN_XFER_SIZE` in particular is the difference
+between a 22-second load and a 4.6-hour one, and someone pulling the image does
+not have our wrapper. `--host 0.0.0.0` is defaulted for the same reason: a
+container that binds loopback starts cleanly and then answers nothing.
+
+Every start prints what the image actually is, because this project's failure
+mode is being slow rather than erroring:
+
+```
+=== vllm-mi210 (gfx90a / CDNA2)
+    vllm_sha=491c3e1960b81e6929f083fa92522388dd38a055
+    reduction_extended=6
+    pytorch_rocm_arch=gfx90a
+    GPU_PINNED_MIN_XFER_SIZE=67108864  VLLM_ROCM_USE_AITER=0
+    arch: gfx90a  OK
+```
+
+`arch:` reports `no GPU visible` when the devices are missing, and warns when
+the card is not gfx90a — this image carries gfx90a code objects only.
+`MI210_QUIET=1` silences the banner.
+
+## Mount a cache directory
+
+The image points the Triton, inductor, vLLM and AITER caches at `/cache`, so one
+mount persists all four:
+
+```bash
+-v ./cache:/cache
+```
+
+Without it they still work but die with the container, and every start
+recompiles. `run.sh` and `compose.yaml` both mount `./cache` for you.
+
 ## What you need
 
 - **Docker.** That is it for `run.sh`.
@@ -159,7 +211,7 @@ Raise it when the model does not fit in one card's 64 GiB, not by default.
 
 | symptom | cause |
 |---|---|
-| `exec: "/path/to/model": is a directory: permission denied` | The image has **no ENTRYPOINT**; the command must start with `vllm serve`. `run.sh` and `compose.yaml` both do. Hand-written `docker run` invocations hit this. |
+| `exec: "/path/to/model": is a directory: permission denied` | An image built before the entrypoint existed. Rebuild, or prefix the command with `vllm serve`. |
 | `the input device is not a TTY` | `docker run -it` under ssh/cron/CI. `run.sh` uses `-i` always and adds `-t` only when stdin is a terminal — dropping `-i` too would silently discard piped input instead. |
 | `max_model_len (N) is greater than the derived max_model_len` | See above — omit the flag. |
 | `Free memory 0.3/63.98 GiB` at startup | Something else is holding VRAM. `docker ps` — a forgotten container is the usual answer, not a leak. |

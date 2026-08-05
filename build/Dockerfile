@@ -104,7 +104,32 @@ COPY --from=fetch /src/vllm/tests/benchmarks/test_benchmark_moe_quant_config.py 
 COPY --from=fetch /src/vllm/benchmarks/kernels/benchmark_moe.py                               /opt/vllm/benchmarks/kernels/
 COPY probe/probe_image_patches.sh /usr/local/bin/probe-image-patches
 COPY build/verify.sh              /usr/local/bin/verify-image
-RUN chmod +x /usr/local/bin/probe-image-patches /usr/local/bin/verify-image
+COPY build/entrypoint.sh          /usr/local/bin/mi210-entrypoint
+RUN chmod +x /usr/local/bin/probe-image-patches /usr/local/bin/verify-image \
+             /usr/local/bin/mi210-entrypoint
+
+# Runtime settings belong to the IMAGE, not to this repo's run.sh. Someone who
+# pulls the published image and runs it under Kubernetes, Slurm or plain docker
+# run does not have our wrapper, and the first of these is the difference
+# between a 22-second load and a 4.6-hour one.
+ENV GPU_PINNED_MIN_XFER_SIZE=67108864 \
+    VLLM_ROCM_USE_AITER=0
+
+# Compile caches under one directory so a single mount persists all of them.
+# Unmounted they still work, they just do not survive the container -- which is
+# the status quo, except now one -v makes restarts fast instead of recompiling
+# Triton and inductor kernels every time.
+ENV VLLM_CACHE_ROOT=/cache/vllm \
+    TORCHINDUCTOR_CACHE_DIR=/cache/inductor \
+    TRITON_CACHE_DIR=/cache/triton \
+    AITER_ROOT_DIR=/cache/aiter
+RUN mkdir -p /cache/vllm /cache/inductor /cache/triton /cache/aiter && chmod 777 /cache
+
+# Without this the image has no entrypoint at all and a model path is exec'd as
+# a program. With it, the image is self-sufficient: `docker run <image> /model`
+# serves, `<image> bench ...` benchmarks, `<image> bash` gives a shell.
+ENTRYPOINT ["/usr/local/bin/mi210-entrypoint"]
+CMD []
 
 # ------------------------------------------------------------- verified ------
 # Gate. Tiers 0-1 need no GPU and run here, so a half-patched image cannot be
