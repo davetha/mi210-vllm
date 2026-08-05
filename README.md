@@ -97,6 +97,19 @@ already correct:
 ./run.sh exec probe-image-patches      # or shell, or any command
 ```
 
+Before downloading something large, ask what it will actually hit — a local
+path, an HF repo id or a pasted Hub URL, reading `config.json` only:
+
+```bash
+./run.sh exec model-fastpath https://huggingface.co/Qwen/Qwen3-8B --tp 2
+./run.sh exec model-convert /path/to/model --to W4A16 --out /models/out
+```
+
+`model-fastpath` answers by calling vLLM's own gate predicates inside the image,
+so it cannot drift from the code that will actually run. `model-convert` turns
+its recommendation into a runnable llm-compressor recipe. Both in
+[docs/RUNNING.md](docs/RUNNING.md).
+
 `run.sh` is a convenience, not a requirement — the image dispatches for itself
 and carries its own ROCm settings, so a plain `docker run <image> /path/to/model`
 behaves identically under Kubernetes or Slurm. It prints what it is at every

@@ -19,9 +19,10 @@ REGISTRY="$REPO/patches/registry.yaml"
 
 NEW="${1:?usage: ./upgrade.sh <upstream-tag>}"
 VLLM_SRC="${VLLM_SRC:-$HOME/eypc/vllm-fork}"
-[ -d "$VLLM_SRC/.git" ] || { echo "no vLLM clone at $VLLM_SRC (set VLLM_SRC)"; exit 1; }
+die() { echo "$*" >&2; exit 1; }
+[ -d "$VLLM_SRC/.git" ] || die "no vLLM clone at $VLLM_SRC (set VLLM_SRC)"
 
-cd "$VLLM_SRC"
+cd "$VLLM_SRC" || die "cannot cd to $VLLM_SRC"
 git fetch upstream --tags --quiet
 git rev-parse "$NEW" >/dev/null 2>&1 || { echo "unknown tag: $NEW"; exit 1; }
 

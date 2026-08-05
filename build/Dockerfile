@@ -108,6 +108,17 @@ COPY build/entrypoint.sh          /usr/local/bin/mi210-entrypoint
 RUN chmod +x /usr/local/bin/probe-image-patches /usr/local/bin/verify-image \
              /usr/local/bin/mi210-entrypoint
 
+# The two model tools are modules, not scripts on PATH, because model-convert
+# imports model-fastpath's config parsing -- a hyphenated file on PATH is not
+# importable. Thin shims keep the command names.
+COPY probe/model_fastpath.py /usr/local/lib/mi210/mi210_fastpath.py
+COPY probe/model_convert.py  /usr/local/lib/mi210/mi210_convert.py
+RUN for t in fastpath convert; do \
+      printf '#!/bin/sh\nexec python3 /usr/local/lib/mi210/mi210_%s.py "$@"\n' "$t" \
+        > "/usr/local/bin/model-$t"; \
+      chmod +x "/usr/local/bin/model-$t"; \
+    done
+
 # Runtime settings belong to the IMAGE, not to this repo's run.sh. Someone who
 # pulls the published image and runs it under Kubernetes, Slurm or plain docker
 # run does not have our wrapper, and the first of these is the difference

@@ -87,7 +87,9 @@ fi
 echo
 [ "$MAX_TIER" -ge 2 ] && echo "=== tier 2: numeric acceptance (needs a GPU) ==="
 if [ "$MAX_TIER" -ge 2 ] && [ "$HAVE_GPU" = yes ]; then
-    cd /opt/vllm
+    # No `set -e` in this script: an unguarded cd would run the tests
+    # from the wrong directory and report whatever it found there.
+    cd /opt/vllm || { echo "cannot cd /opt/vllm"; return 1; }
     gate "long-context paged attention vs Triton (11 tests)" \
          "$PY -m pytest tests/kernels/attention/test_rocm_paged_attention_long_context.py -q -p no:warnings"
     gate "wvSplitK strided activations (4 tests)" \
