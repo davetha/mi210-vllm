@@ -53,24 +53,65 @@ the card is not gfx90a — this image carries gfx90a code objects only.
 
 ## Before you serve: what will this model actually hit?
 
+Reads `config.json` only — no weights, no GPU allocation, seconds not minutes.
+All four of these name the same thing and all four work:
+
 ```bash
-./run.sh exec model-fastpath /path/to/model --tp 2
-./run.sh exec model-fastpath https://huggingface.co/Qwen/Qwen3-8B
+./run.sh exec model-fastpath /mnt/models/glm-awq --tp 2          # local directory
+./run.sh exec model-fastpath Qwen/Qwen3-0.6B                     # HF repo id
+./run.sh exec model-fastpath https://huggingface.co/Qwen/Qwen3-0.6B
+./run.sh exec model-fastpath https://huggingface.co/Qwen/Qwen3-0.6B/tree/main
 ```
 
-Reads `config.json` only — no weights, no GPU allocation, seconds not minutes.
-A local path, an HF repo id, or a pasted Hub URL all work.
+A `/tree/<rev>` or `/resolve/<rev>/config.json` URL is accepted too, and the
+revision in it is honoured rather than discarded. Local paths are mounted into
+the container automatically — `run.sh` mounts every argument that names a path
+on your machine, so no `-v` is needed.
+
+A full run, against a compressed-tensors W4A16 MoE checkpoint:
+
+```
+$ ./run.sh exec model-fastpath /mnt/models/glm-awq --tp 2
+
+/mnt/models/glm-awq
+  glm4_moe  92 layers  hidden 5120  heads 96/8  head_size 128  dtype unknown
+  running on gfx90a
+
+attention
+  block_size   16  custom PA  specialised kernel
+  block_size   32  custom PA  specialised kernel
+  block_size   64  custom PA  free kernel
+  block_size  128  Triton     block_size > 64 is wrong on gfx90a; routed to Triton
+  block_size  544  Triton     block_size > 64 is wrong on gfx90a; routed to Triton
+
+context
+  202752 tokens needs the multi-pass reduction in this image; stock vLLM caps
+  at 131072 on this path
+
+quantization
+  compressed-tensors W4A16
+  MoE W4A16 hits the int4 interleave path this image widens to GFX9
+  (measured 1.45-4.8x on the int4 MoE kernel, bit-identical).
+
+MoE
+  160 experts, moe_intermediate_size 1536
+  at TP=2 the tuned-config key is E=160,N=768
+  the filename does not encode K (hidden=5120), so a folder holding another
+  model's E=160,N=768 config would be silently misapplied
+
+recommendations
+  - Tuned fused_moe configs measured neutral or worse on this hardware across
+    ~13 GPU-hours. Start untuned; see tuning/manifest.json.
+```
 
 The verdicts come from calling **vLLM's own predicates in the image**, not from
 a written-down copy of the rules. A summary of the gates drifts the moment
 either side changes, and a confident wrong answer here is worse than no tool.
 
-```
-attention
-  block_size   16  custom PA  specialised kernel
-  block_size   64  custom PA  free kernel
-  block_size  544  Triton     block_size > 64 is wrong on gfx90a; routed to Triton
+The same model in a format that *misses* a fast path says so, and says what to
+do instead:
 
+```
 quantization
   gptq 4-bit
   This misses the int4 interleave fast path. That patch lives in the
@@ -82,7 +123,24 @@ recommendations
     different packing -- `model-convert --to W4A16`.
 ```
 
-`--json` gives the same content machine-readably.
+`--json` gives the same content machine-readably, for a gate in CI or a script
+that picks a checkpoint:
+
+```json
+{
+ "model": "/mnt/models/t35-fp8",
+ "arch": "gfx90a",
+ "attention": {
+  "64":  { "custom_paged_attention": true,  "reason": "free kernel" },
+  "544": { "custom_paged_attention": false,
+           "reason": "block_size > 64 is wrong on gfx90a; routed to Triton" }
+ },
+ "recommendations": [
+  "Prefer an int4 (AWQ / GPTQ / compressed-tensors W4A16) or int8 W8A8 export of
+   the same model. Both have hardware support on gfx90a; fp8 does not."
+ ]
+}
+```
 
 Some verdicts worth knowing before you download 200 GB:
 
@@ -104,6 +162,31 @@ Some verdicts worth knowing before you download 200 GB:
 It picks a scheme from what the model *is* — MoE gets W4A16, because that is the
 only route to the interleave kernel — and writes a complete, runnable
 `quantize.py`. FP8 is deliberately not offered: there is no datapath for it here.
+
+```
+$ ./run.sh exec model-convert /mnt/models/t235-gptq4 --out /mnt/models/t235-w4a16 -y
+
+/mnt/models/t235-gptq4
+  qwen3_moe  hidden 4096  MoE, 128 experts  quant gptq
+
+  - Source is already gptq 4-bit.
+  - This is a MoE checkpoint, and W4A16 in compressed-tensors format is the only
+    path that reaches the int4 interleave kernel.
+
+scheme: W4A16 (recommended)
+
+wrote /mnt/models/t235-w4a16/quantize.py
+  scheme  W4A16
+  ignore  lm_head, re:.*mlp.gate$, re:.*mlp.shared_expert_gate$
+  calib   512 samples x 2048 tokens from HuggingFaceH4/ultrachat_200k
+
+Review it, then run:
+  model-convert /mnt/models/t235-gptq4 --to W4A16 --out /mnt/models/t235-w4a16 --run
+  or: python3 /mnt/models/t235-w4a16/quantize.py
+```
+
+Without `-y` it asks, showing each scheme and marking the recommended one.
+`--to W4A16` or `--to W8A8` skips the question entirely.
 
 It sets the calibration ignore list for you, including the MoE router. That one
 matters: quantising the gate degrades expert selection **quietly** rather than
