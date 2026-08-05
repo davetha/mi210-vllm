@@ -51,6 +51,75 @@ mode is being slow rather than erroring:
 the card is not gfx90a — this image carries gfx90a code objects only.
 `MI210_QUIET=1` silences the banner.
 
+## Before you serve: what will this model actually hit?
+
+```bash
+./run.sh exec model-fastpath /path/to/model --tp 2
+./run.sh exec model-fastpath https://huggingface.co/Qwen/Qwen3-8B
+```
+
+Reads `config.json` only — no weights, no GPU allocation, seconds not minutes.
+A local path, an HF repo id, or a pasted Hub URL all work.
+
+The verdicts come from calling **vLLM's own predicates in the image**, not from
+a written-down copy of the rules. A summary of the gates drifts the moment
+either side changes, and a confident wrong answer here is worse than no tool.
+
+```
+attention
+  block_size   16  custom PA  specialised kernel
+  block_size   64  custom PA  free kernel
+  block_size  544  Triton     block_size > 64 is wrong on gfx90a; routed to Triton
+
+quantization
+  gptq 4-bit
+  This misses the int4 interleave fast path. That patch lives in the
+  compressed-tensors MoE path; the awq/gptq path (moe_wna16.py) has not been ported.
+
+recommendations
+  - A compressed-tensors W4A16 export of this model would hit the int4 interleave
+    path (1.45-4.8x on the int4 MoE kernel, bit-identical). Same weights,
+    different packing -- `model-convert --to W4A16`.
+```
+
+`--json` gives the same content machine-readably.
+
+Some verdicts worth knowing before you download 200 GB:
+
+| checkpoint | verdict |
+|---|---|
+| FP8 anything | MI210 is CDNA2 and has **no FP8 datapath**. It may load; there is nothing to accelerate. |
+| compressed-tensors W4A16 MoE | hits the int4 interleave path (1.45–4.8x, bit-identical) |
+| AWQ / GPTQ 4-bit MoE | misses it — the port to `moe_wna16.py` is not done |
+| compressed-tensors W4A8 | int-quantized path, not the wNa16 path the patch widens |
+| W8A8 int8 | hardware support on gfx90a |
+
+## Converting a checkpoint
+
+```bash
+./run.sh exec model-convert /path/to/model            # asks, then generates
+./run.sh exec model-convert https://huggingface.co/Org/M --to W4A16 --out /models/m-w4a16
+```
+
+It picks a scheme from what the model *is* — MoE gets W4A16, because that is the
+only route to the interleave kernel — and writes a complete, runnable
+`quantize.py`. FP8 is deliberately not offered: there is no datapath for it here.
+
+It sets the calibration ignore list for you, including the MoE router. That one
+matters: quantising the gate degrades expert selection **quietly** rather than
+erroring.
+
+**`--run` does not work in this image, and says so rather than pretending.**
+Measured 2026-08-04: `llmcompressor` installs but does not import under the base
+image's Python 3.14 (pydantic 2.13.4 cannot evaluate `dict[str, Any]` in 3.14's
+`annotationlib`), *and* installing it downgrades transformers 5.14.0 → 5.10.1 and
+moves compressed-tensors past vLLM's `==0.17.0` pin. Either alone disqualifies
+it from the serving image.
+
+The generated `quantize.py` is standalone — run it anywhere llm-compressor
+works. `build/add-convert.sh` re-checks both conditions and refuses to commit an
+image unless both pass, so it will start working when the base image moves.
+
 ## Mount a cache directory
 
 The image points the Triton, inductor, vLLM and AITER caches at `/cache`, so one

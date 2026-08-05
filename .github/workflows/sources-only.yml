@@ -58,6 +58,34 @@ jobs:
           check_tag "$AITER_CDNA2" "$AITER_CDNA2_REF" || fail=1
           exit $fail
 
+  shell:
+    # Eight shell scripts run builds, verification and serving. A quoting bug
+    # in one of them is a broken build or a silently wrong flag, and both have
+    # happened here already.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          mapfile -t files < <(git ls-files '*.sh')
+          printf 'checking %s\n' "${files[@]}"
+          shellcheck --severity=warning "${files[@]}"
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: compile and lint the model tools
+        run: |
+          set -euo pipefail
+          python -m compileall -q probe/
+          pip install --quiet ruff
+          ruff check --select=E9,F63,F7,F82,F401,F841 probe/
+
   registry-matches-fork:
     # patches/registry.yaml indexes branches that live in the vLLM fork, not
     # here. Nothing stops it drifting from what the pinned tag actually

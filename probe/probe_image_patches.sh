@@ -19,7 +19,6 @@
 set -uo pipefail
 
 IMAGES=${IMAGES:-$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E 'vllm-mi210|rocm-vllm-aiter' | sort)}
-R=/opt/python/lib/python3.14/site-packages
 
 probe_one() {  # image
     local img="$1"

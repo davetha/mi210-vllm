@@ -4,3 +4,5 @@ crash-dumps/
 Caddyfile
 .omc/
 cache/
+__pycache__/
+*.pyc
