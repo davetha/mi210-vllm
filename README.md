@@ -46,6 +46,7 @@ run.sh                serve any model in one command -- docs/RUNNING.md
 compose.yaml          the stack consumers run
 build/                the ONE compiled layer + its gates
   Dockerfile          rebuilds _rocm_C for gfx90a. NEEDS NO GPU.
+  entrypoint.sh       the image's own dispatch + arch preamble
   build.sh            build, verify on real cards, record the digest
   add-aiter.sh        OPTIONAL, needs the cards: AITER + gfx90a ASM kernels
   verify.sh           static markers -> runtime gates -> numeric tests
@@ -95,6 +96,12 @@ already correct:
 ./run.sh complete --url http://localhost:8000/v1 --model /path/to/model --quick "hello"
 ./run.sh exec probe-image-patches      # or shell, or any command
 ```
+
+`run.sh` is a convenience, not a requirement — the image dispatches for itself
+and carries its own ROCm settings, so a plain `docker run <image> /path/to/model`
+behaves identically under Kubernetes or Slurm. It prints what it is at every
+start (patch markers, arch check), because a half-patched image fails by being
+slow rather than by erroring.
 
 `compose.yaml` is the other way in, for a deployment you run repeatedly. Both
 are covered in [docs/RUNNING.md](docs/RUNNING.md), along with the settings that

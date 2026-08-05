@@ -43,33 +43,24 @@ PORT="${PORT:-8000}"
 HF_CACHE="${HF_CACHE:-$HOME/.cache/huggingface}"
 
 # ---------------------------------------------------------------- dispatch ---
-# The vLLM CLI as of v0.26.1rc0. A bare first argument that is not one of these
-# is taken to be a model, because serving is what nearly every invocation wants
-# and `./run.sh <model>` should stay the short form.
+# The image's own entrypoint does the dispatch -- model to serve, subcommand to
+# that subcommand, executable to exec -- so it behaves identically under plain
+# docker run, Kubernetes or Slurm. All this script decides is networking, which
+# is a property of the container rather than of the command.
 LISTENS=0          # does this command bind a port, or connect out?
-ENTRY=(--entrypoint vllm)
 case "$1" in
-  serve|launch)
-    LISTENS=1; ARGS=("$@"); shift $# ;;
-  chat|complete|bench|collect-env|run-batch)
-    ARGS=("$@"); shift $# ;;
-  shell)
-    shift; ARGS=(); ENTRY=(--entrypoint bash) ;;
+  serve|launch)                            LISTENS=1; ARGS=("$@") ;;
+  chat|complete|bench|collect-env|run-batch)          ARGS=("$@") ;;
+  shell)                                   shift;     ARGS=(bash "$@") ;;
   exec)
     shift
     [ $# -gt 0 ] || { echo "exec needs a command" >&2; exit 1; }
-    ARGS=("$@"); ENTRY=(--entrypoint "$1"); shift; ARGS=("$@") ;;
+    ARGS=("$@") ;;
   -*)
     echo "unknown option: $1 (a model must not start with -)" >&2; exit 1 ;;
   *)
-    LISTENS=1; MODEL="$1"; shift; ARGS=(serve "$MODEL" "$@") ;;
+    LISTENS=1; ARGS=("$@") ;;
 esac
-
-# --host 0.0.0.0 or the server is unreachable from outside the container. Only
-# added when absent, so an explicit --host still wins.
-if [ "$LISTENS" = 1 ] && [[ " ${ARGS[*]} " != *" --host "* ]]; then
-  ARGS+=(--host 0.0.0.0)
-fi
 
 # ------------------------------------------------------------------ mounts ---
 # Any argument that names a path on this machine is bind-mounted read-only at
@@ -112,16 +103,20 @@ else
   NET=(--network host)
 fi
 
-# NOT optional on ROCm, and not a vLLM setting -- a HIP runtime tunable. Above
-# HIP's ~1 MiB default, .to(device) page-locks the caller's buffer and
-# hsa_amd_memory_lock_to_pool costs ~1 s per tensor while the DMA is 14 ms. On a
-# MoE checkpoint with thousands of expert tensors that is hours. docs/LOAD-TIME.md.
-: "${GPU_PINNED_MIN_XFER_SIZE:=67108864}"
+# GPU_PINNED_MIN_XFER_SIZE and VLLM_ROCM_USE_AITER are baked into the image, so
+# they are correct for anyone running it without this script. Only forward them
+# when the caller has actually set one, which keeps the image the single place
+# a default is defined instead of two places that can disagree.
+ENVS=()
+for v in GPU_PINNED_MIN_XFER_SIZE VLLM_ROCM_USE_AITER HF_TOKEN MI210_QUIET; do
+  [ -n "${!v:-}" ] && ENVS+=(-e "$v=${!v}")
+done
 
-# AITER off unless the image has it. The core image does not; forcing it on
-# makes AITER's JIT build a module that fails to compile and takes engine
-# startup down with it. build/add-aiter.sh produces an image where 1 is correct.
-: "${VLLM_ROCM_USE_AITER:=0}"
+# Persist the Triton / inductor / AITER compile caches. Without a mount they
+# still work, they just die with the container and every start recompiles.
+CACHE_DIR="${CACHE_DIR:-$PWD/cache}"
+mkdir -p "$CACHE_DIR"
+MOUNTS+=(-v "$CACHE_DIR:/cache")
 
 # -i always, -t only when there IS a terminal. Unconditional -it dies with "the
 # input device is not a TTY" under ssh, cron, nohup and CI -- exactly the
@@ -133,7 +128,7 @@ TTY=(-i)
 
 echo "=== image  : $IMAGE"
 [ "$LISTENS" = 1 ] && echo "=== serving: http://0.0.0.0:$PORT   (container: $NAME)" \
-                   || echo "=== running: ${ENTRY[1]} ${ARGS[*]}   (container: $NAME)"
+                   || echo "=== running: ${ARGS[*]}   (container: $NAME)"
 
 exec docker run --rm "${TTY[@]}" --name "$NAME" \
   --device /dev/kfd --device /dev/dri --group-add video \
@@ -142,9 +137,6 @@ exec docker run --rm "${TTY[@]}" --name "$NAME" \
   --ulimit memlock=-1 \
   "${NET[@]}" \
   "${MOUNTS[@]}" "${TUNING[@]}" \
-  -e GPU_PINNED_MIN_XFER_SIZE="$GPU_PINNED_MIN_XFER_SIZE" \
-  -e VLLM_ROCM_USE_AITER="$VLLM_ROCM_USE_AITER" \
-  ${HF_TOKEN:+-e HF_TOKEN="$HF_TOKEN"} \
-  "${ENTRY[@]}" \
+  ${ENVS[@]+"${ENVS[@]}"} \
   "$IMAGE" \
   ${ARGS[@]+"${ARGS[@]}"}
