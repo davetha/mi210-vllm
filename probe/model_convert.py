@@ -231,15 +231,12 @@ def main() -> int:
         die(
             "llmcompressor is not in this image, so nothing was converted.\n"
             "\n"
-            "  It is deliberately absent, and as of 2026-08-04 it cannot be added:\n"
-            "    - it installs but does not import on this base image's Python 3.14\n"
-            "      (pydantic 2.13.4 fails to evaluate 'dict[str, Any]');\n"
-            "    - installing it downgrades transformers 5.14.0 -> 5.10.1 and moves\n"
-            "      compressed-tensors past vllm's ==0.17.0 pin.\n"
+            "  The serving image deliberately has no quantizer. Build the convert\n"
+            "  image once, then re-run this exact command:\n"
+            "    ./build/add-convert.sh <image>\n"
             "\n"
-            f"  The script just written is standalone -- run it anywhere llm-compressor\n"
-            f"  works, GPU included:  python3 {path}\n"
-            "  ./build/add-convert.sh re-checks both conditions if you want to retry."
+            f"  Or run the script just written anywhere llm-compressor works --\n"
+            f"  it is standalone:  python3 {path}"
         )
 
     print()

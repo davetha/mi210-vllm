@@ -196,22 +196,14 @@ rebuild this" and "anyone with an MI210 can rebuild this".
   GLM-4.5-Air: **22 s** with it, hours without. See `docs/LOAD-TIME.md`.
   Unreported upstream.
 
-- **`model-convert --run` cannot quantize inside this image.** It writes the
-  recipe and stops. Two independent blockers, both measured 2026-08-04 against
-  the `rocm/vllm` 0.23 base:
-
-  1. `llmcompressor` installs but does not import on that base's **Python 3.14** —
-     pydantic 2.13.4 (the current release) fails to evaluate `dict[str, Any]`
-     under 3.14's `annotationlib`.
-  2. Installing it **downgrades transformers 5.14.0 → 5.10.1** and moves
-     compressed-tensors past vLLM's `==0.17.0` pin.
-
-  Either alone disqualifies it from a serving image, so this is a deliberate
-  refusal rather than a missing feature — `build/add-convert.sh` asserts both
-  and exits 1 rather than committing a drifted image. The generated
-  `quantize.py` is standalone: run it anywhere llm-compressor works, then serve
-  the result here. Both conditions are re-checked on every run, so this
-  resolves itself when the base image's Python moves. See `docs/RUNNING.md`.
+- **Quantizing needs the separate convert image**, built by
+  `build/add-convert.sh`. The serving image has no quantizer, and adding one
+  naively breaks it: a plain `pip install llmcompressor` downgrades transformers
+  5.14.0 → 5.10.1 and moves compressed-tensors off vLLM's `==0.17.0` pin.
+  `--no-deps` plus three upstream patches avoids that; the build asserts the
+  stack is unmoved and that vLLM still imports before committing anything.
+  Verified end to end on 2026-08-05: a self-quantized W4A16 model served and
+  answered correctly. See `docs/RUNNING.md`.
 
 - **The int4 interleave path is compressed-tensors only.** AWQ and GPTQ MoE
   checkpoints do not reach it; the port to `moe_wna16.py` is not done, so those

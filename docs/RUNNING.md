@@ -220,16 +220,38 @@ It sets the calibration ignore list for you, including the MoE router. That one
 matters: quantising the gate degrades expert selection **quietly** rather than
 erroring.
 
-**`--run` does not work in this image, and says so rather than pretending.**
-Measured 2026-08-04: `llmcompressor` installs but does not import under the base
-image's Python 3.14 (pydantic 2.13.4 cannot evaluate `dict[str, Any]` in 3.14's
-`annotationlib`), *and* installing it downgrades transformers 5.14.0 → 5.10.1 and
-moves compressed-tensors past vLLM's `==0.17.0` pin. Either alone disqualifies
-it from the serving image.
+### `--run` needs the convert image
 
-The generated `quantize.py` is standalone — run it anywhere llm-compressor
-works. `build/add-convert.sh` re-checks both conditions and refuses to commit an
-image unless both pass, so it will start working when the base image moves.
+The serving image has no quantizer. Build one once:
+
+```bash
+./build/add-convert.sh local/vllm-mi210:latest   # -> local/vllm-mi210:convert
+```
+
+Then `model-convert ... --run` works. Verified end to end on 2026-08-05: a
+0.6B model quantized to W4A16, served on the cards, and answered
+`"The capital of France is"` → `" Paris."`, with vLLM reporting
+`quantization=compressed-tensors`.
+
+Keeping the quantizer out of the serving image is not fussiness. A plain
+`pip install llmcompressor` **downgrades transformers 5.14.0 → 5.10.1** and moves
+compressed-tensors off vLLM's `==0.17.0` pin — a drifted serving stack is what
+cost vllm-radiance five releases of multi-GPU hangs. `--no-deps` avoids it, and
+the build then *asserts* the stack is unmoved and that vLLM still imports before
+committing anything.
+
+Three upstream bugs are patched during that build
+(`build/patch_llmcompressor_py314.py`); all three are still present on
+llm-compressor `main` as of 2026-08-05:
+
+| # | problem | fix |
+|---|---|---|
+| 1 | import fails on **Python 3.14**: `Recipe` annotates `args: dict[str, Any]` and also defines `def dict()`, so PEP 649's deferred evaluation resolves `dict` to the method | annotate `Dict[...]` |
+| 2 | `oneshot()` fails: 3.14's argparse `%`-expands help strings, and `--splits` documents `'train[:50%]'` | escape to `%%` |
+| 3 | not a 3.14 issue — `get_registration()` eagerly imports granitemoe, whose `GraniteMoeParallelExperts` transformers 5.14 removed, killing quantization for *unrelated* models | import tolerantly, and warn |
+
+The generated `quantize.py` is standalone either way — run it anywhere
+llm-compressor works, then serve the result here.
 
 ## Mount a cache directory
 
