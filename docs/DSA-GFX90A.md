@@ -1,7 +1,10 @@
 # DSA sparse attention on gfx90a (GLM-5.2)
 
-GLM-5.2 serves on 2x MI210. It generates coherent text, and it is **0.81 tok/s**
-— proof the architecture runs on CDNA2, not a usable deployment.
+GLM-5.2 serves on 2x MI210. It generates coherent text, and it is **~1.0 tok/s**
+(expert-selective offload; 0.81 before it) — proof the architecture runs on CDNA2,
+not a usable deployment. For ~6 tok/s short-context, run it under llama.cpp instead
+([LLAMACPP-GFX90A.md](LLAMACPP-GFX90A.md)); why ~1 is the ceiling is in
+[ROUTING.md](ROUTING.md).
 
 ```
 $ curl .../v1/completions -d '{"prompt":"The capital of France is","max_tokens":24}'
@@ -105,8 +108,8 @@ makes the weights load. It is required.
 
 ## Limits, plainly
 
-**0.81 tok/s.** 162 GiB per card is streamed from system RAM over PCIe every
-forward pass. The model runs; it is not a deployment.
+**~1.0 tok/s** (0.81 before expert-selective offload). 162 GiB per card is streamed
+from system RAM over PCIe every forward pass. The model runs; it is not a deployment.
 
 **~420 GB of host RAM.** The offloader maps the whole per-GPU shard into shared
 memory regardless of the offload value, and the ~21 GiB of non-expert weights
@@ -124,6 +127,10 @@ for anything real.
 tokens, so headroom exists, but nothing here validates long context.
 
 ## If you want it faster
+
+The answer found is to stop shipping experts over PCIe: llama.cpp `-cmoe` keeps them on the
+CPU and reaches **~6 tok/s** short-context — see [LLAMACPP-GFX90A.md](LLAMACPP-GFX90A.md).
+What follows is about the vLLM-internal knobs.
 
 The fp32 logits kernel is a reference implementation — a Triton version would
 cut the bandwidth cost, and upstream's own `# TODO: move and optimize below
