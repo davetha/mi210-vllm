@@ -60,11 +60,20 @@ docker exec "$C" bash -lc "
 # 3. Open AITER's gfx90a dispatch, then let vLLM route attention to it. --check
 #    re-reads the file: a patch that silently no-ops leaves an image that is
 #    merely slow, which is the failure this whole build guards against.
+#
+#    enable_vllm_aiter_gfx90a.py opens ATTENTION ONLY -- deliberately, because
+#    is_enabled() has ~22 consumers and widening it changes branches inside a
+#    working optimization. So LINEAR needs its own patch, and without it an int8
+#    (W8A8) checkpoint silently serves from vLLM's generic Triton kernel: correct
+#    output, no warning, ~1/3 the decode rate. That is exactly the failure this
+#    build guards against, and it shipped undetected until 2026-08-07.
 docker exec "$C" bash -lc "
   set -e
   python3 /src/aiter-cdna2/patches/enable_gfx90a_asm_paths.py
   python3 /src/aiter-cdna2/patches/enable_vllm_aiter_gfx90a.py
   python3 /src/aiter-cdna2/patches/enable_vllm_aiter_gfx90a.py --check
+  python3 /src/aiter-cdna2/patches/enable_aiter_ck_gemm_gfx90a.py
+  python3 /src/aiter-cdna2/patches/enable_aiter_ck_gemm_gfx90a.py --check
 "
 
 docker exec "$C" bash -lc "rm -rf /src/aiter /src/aiter-cdna2"
