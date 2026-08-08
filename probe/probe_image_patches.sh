@@ -31,8 +31,27 @@ grep -q "\"gfx90a\"" $R/aiter/jit/utils/build_targets.py 2>/dev/null \
   && say ck_gemm_cu_map yes || say ck_gemm_cu_map no
 
 # configs/enable_aiter_ck_gemm_gfx90a.py, blocker 2: the selection gate.
-grep -q "gfx90a carve-out" $R/vllm/_aiter_ops.py 2>/dev/null \
-  && grep -A8 "def is_linear_enabled" $R/vllm/_aiter_ops.py 2>/dev/null | grep -q "is_aiter_attention_supported" \
+#
+# is_linear_enabled() reaches AITER only if SOME gfx90a carve-out is in its call
+# chain. There are two places to put one, and both work:
+#
+#   a) on is_linear_enabled itself -- what enable_aiter_ck_gemm_gfx90a.py does,
+#      swapping @if_aiter_supported for the attention-supported predicate.
+#   b) inside is_aiter_found_and_supported(), the master predicate that
+#      @if_aiter_supported resolves through. Broader, so (a) is preferred, but
+#      it opens the linear gate just the same.
+#
+# Checking only for (a) called an image with (b) `no` while its runtime gate was
+# True -- a false negative that says "slow image" about a fast one and invites a
+# pointless rebuild. Do NOT relax this to a bare `grep gfx90a` on the file:
+# enable_vllm_aiter_gfx90a.py puts gfx90a in here for ATTENTION (6 hits on an
+# image whose linear gate is shut), so that flips the error to a false positive,
+# which is the worse direction. Scope each check to its function.
+_gate_a=$(grep -A8 "def is_linear_enabled" $R/vllm/_aiter_ops.py 2>/dev/null \
+            | grep -c "is_aiter_attention_supported")
+_gate_b=$(sed -n "/def is_aiter_found_and_supported/,/^def /p" $R/vllm/_aiter_ops.py 2>/dev/null \
+            | grep -c "gfx90a")
+[ "${_gate_a:-0}" -gt 0 ] || [ "${_gate_b:-0}" -gt 0 ] \
   && say ck_gemm_linear_gate yes || say ck_gemm_linear_gate no
 
 # configs/enable_vllm_aiter_gfx90a.py -- AITER attention dispatch.
