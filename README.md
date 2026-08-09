@@ -50,6 +50,10 @@ build/                the ONE compiled layer + its gates
   build.sh            build, verify on real cards, record the digest
   add-aiter.sh        OPTIONAL, needs the cards: AITER + gfx90a ASM kernels
   verify.sh           static markers -> runtime gates -> numeric tests
+  quant_nemotron_heretic_vast.sh  W4A16 on a rented box; the ignore list is
+                      NVIDIA's own, because quantising a Mamba-2 hybrid's SSM
+                      projections yields fluent WRONG text rather than an error
+  watch_vast_quant.sh watchdog that kills the rental when it stops progressing
 patches/              NO diffs here -- the patches are branches on the fork,
   registry.yaml       already merged into VLLM_REF. This is their index, with
   README.md           an obsolete_when predicate per patch. Read patches/README.md.
@@ -187,6 +191,27 @@ AITER is a separate step by choice. `import aiter` probes the GPU through
 `docs/GPU-IN-BUILD.md`. It is kept out so the core image needs no CDI setup, no
 labs Dockerfile frontend and no GPU, which is the difference between "anyone can
 rebuild this" and "anyone with an MI210 can rebuild this".
+
+## Measured against llama.cpp on the same cards
+
+Same box, same model architecture (`NemotronHForCausalLM`, 512 experts, top-22),
+matched prompt lengths. vLLM here is `dsa7-aiterint8` with `--tensor-parallel-size 2`;
+llama.cpp is [davetha/llama.cpp-mi210](https://github.com/davetha/llama.cpp-mi210)
+with its CDNA2 prefill patches.
+
+| prefill | llama.cpp | vLLM TP=2 | gap |
+|---|---:|---:|---:|
+| ~4k | 2102 | 3635 | 1.73× |
+| ~16k | 2708 | 3563 | 1.32× |
+
+vLLM's figures include HTTP and tokenisation, so they are marginally pessimistic.
+Most of what is left is **tensor parallelism**: sampling `gpu_busy_percent`
+during a 16k prefill, vLLM holds both cards at 99.4% / 99.6% simultaneously for
+99% of samples, while llama.cpp's `-sm layer` manages 85.6% aggregate at 16k and
+62% at 4k. That is worth roughly 1.16×, and llama.cpp cannot currently claim it
+on Mamba-2 hybrids — ggml's split-state model cannot describe `ggml_ssm_scan`'s
+fused output, which is why every SSM/hybrid arch is on its `-sm tensor`
+exclusion list. Written up in that repo.
 
 ## Known limits
 
