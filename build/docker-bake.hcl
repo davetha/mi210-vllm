@@ -9,6 +9,7 @@
 variable "BASE_IMAGE" {}
 variable "VLLM_FORK" {}
 variable "VLLM_REF" {}
+variable "VLLM_IS_FORK" { default = "1" }
 variable "AITER_REPO" {}
 variable "AITER_REF" {}
 variable "AITER_CDNA2" {}
@@ -25,6 +26,7 @@ target "_common" {
     BASE_IMAGE      = BASE_IMAGE
     VLLM_FORK       = VLLM_FORK
     VLLM_REF        = VLLM_REF
+    VLLM_IS_FORK    = VLLM_IS_FORK
     AITER_REPO      = AITER_REPO
     AITER_REF       = AITER_REF
     AITER_CDNA2     = AITER_CDNA2

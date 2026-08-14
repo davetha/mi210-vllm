@@ -8,14 +8,47 @@
 BASE_IMAGE=rocm/vllm@sha256:ac1be45dac88db3fd32c1aa45ecd043c0efad7a809c1bcb36960e369d9dbb8a6
 BASE_IMAGE_TAG_FYI=rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0
 
+# vLLM source. The default is the fork, because it carries the four gfx90a
+# patches that are the reason this project exists and that verify.sh gates on.
+# To build against upstream instead, see BUILDING FROM UPSTREAM below: override
+# on the command line, do not edit these four lines.
 VLLM_FORK=https://github.com/davetha/vllm
 VLLM_REF=v0.26.1rc0+mi210.1   # PEP 440 local version; see build note below
+VLLM_IS_FORK=1
 VLLM_UPSTREAM_BASE=v0.26.1rc0
 # The '+' is required, not cosmetic. vLLM builds its version with
 # setuptools_scm, which parses the git tag; a tag like v0.26.1rc0-mi210.1 is
 # not valid PEP 440 and fails metadata generation with
 #   ValueError: Can't parse version from tag
 # '+mi210.1' is a local version identifier: version 0.26.1rc0, locally modified.
+
+# ------------------------------------------------ BUILDING FROM UPSTREAM -----
+# A new model architecture often lands in vllm-project/vllm main long before any
+# release tag carries it, and longer still before it is rebased into the fork.
+# Ling-3.0-flash (BailingMoeV3) was the first case: absent from v0.26.1rc0,
+# v0.27.0 and v0.27.1; present in main. So this is a supported mode, not a hack.
+#
+# Override on the command line -- the pins above stay put:
+#
+#   VLLM_FORK=https://github.com/vllm-project/vllm \
+#   VLLM_REF=63550515b498261c820a1540be86a96e50802725 \
+#   VLLM_IS_FORK=0 \
+#     build/build.sh ghcr.io/davetha/vllm-mi210:ling
+#
+# Pin the SHA, never `main`. `main` is a moving target and the first line of
+# this file is the whole reason that matters. build/Dockerfile probes whether
+# VLLM_REF is a branch/tag and falls back to fetching it as a commit, so a bare
+# SHA works here even though `git clone --branch` will not take one.
+#
+# WHAT YOU GIVE UP: all four gfx90a patches. verify.sh fails every marker and
+# there are no AITER gfx90a code objects. Build the `gfx90a-unverified` bake
+# target and tag the result -unverified so it can never be mistaken for a gated
+# image. It still works: Ling served int4 at 4,711 t/s prefill this way, because
+# vLLM's WNA16 oracle has no gfx gate and falls through to the Triton backend. A
+# properly patched build should be FASTER than that, not slower.
+#
+# VLLM_IS_FORK=0 also downgrades the two fork-only acceptance files from a build
+# error to a warning. Leave it at 1 for fork builds so their absence stays loud.
 
 # Upstream AITER, unmodified. The fork davetha/aiter exists but carries no
 # gfx90a patches -- the gfx90a work is not source changes to AITER, it is

@@ -5,7 +5,14 @@
 # this script writes into VERSIONS.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# VERSIONS is the default, not the law: BUILDING FROM UPSTREAM tells you to
+# override VLLM_FORK/VLLM_REF/VLLM_IS_FORK on the command line. Sourcing the
+# file would clobber those, so capture them first and put them back after.
+_ovr_fork="${VLLM_FORK:-}"; _ovr_ref="${VLLM_REF:-}"; _ovr_isfork="${VLLM_IS_FORK:-}"
 set -a; . ./VERSIONS; set +a
+if [ -n "$_ovr_fork" ];   then VLLM_FORK="$_ovr_fork";     echo "note: VLLM_FORK overridden from the environment"; fi
+if [ -n "$_ovr_ref" ];    then VLLM_REF="$_ovr_ref";       echo "note: VLLM_REF overridden from the environment"; fi
+if [ -n "$_ovr_isfork" ]; then VLLM_IS_FORK="$_ovr_isfork"; echo "note: VLLM_IS_FORK overridden from the environment"; fi
 
 # bake builds ${REGISTRY}/vllm-mi210:${TAG}. Derive both from one argument so
 # the name used after the build cannot drift from the name bake produced.
@@ -17,7 +24,7 @@ IMAGE="${REGISTRY}/vllm-mi210:${TAG}"
 
 echo "=== image  : $IMAGE"
 echo "=== base   : $BASE_IMAGE"
-echo "=== vllm   : $VLLM_FORK @ $VLLM_REF"
+echo "=== vllm   : $VLLM_FORK @ $VLLM_REF (is_fork=${VLLM_IS_FORK:-1})"
 echo "=== aiter  : $AITER_REPO @ $AITER_REF"
 echo "=== repatch: $AITER_CDNA2 @ $AITER_CDNA2_REF"
 echo
@@ -25,6 +32,7 @@ echo
 # bake reads VERSIONS through the environment; the gated `verified` stage is
 # the default target, so the safe thing happens without a flag.
 BASE_IMAGE="$BASE_IMAGE" VLLM_FORK="$VLLM_FORK" VLLM_REF="$VLLM_REF" \
+VLLM_IS_FORK="${VLLM_IS_FORK:-1}" \
 AITER_REPO="$AITER_REPO" AITER_REF="$AITER_REF" \
 AITER_CDNA2="$AITER_CDNA2" AITER_CDNA2_REF="$AITER_CDNA2_REF" \
 REGISTRY="$REGISTRY" TAG="$TAG" TRITON_PIN="$TRITON_PIN" \
