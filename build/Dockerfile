@@ -43,11 +43,57 @@ ARG AITER_REPO
 ARG AITER_REF
 ARG AITER_CDNA2
 ARG AITER_CDNA2_REF
-RUN git clone --depth 1 --branch "${VLLM_REF}"             "${VLLM_FORK}"   /src/vllm \
+# 1 when VLLM_FORK is davetha/vllm, 0 when building against upstream. See the
+# BUILDING FROM UPSTREAM section of VERSIONS.
+ARG VLLM_IS_FORK=1
+
+# `git clone --branch` takes a branch or a tag and will NOT take a commit SHA,
+# but building from upstream means pinning a SHA rather than a moving `main`.
+# Probe for a ref by that name first; otherwise fetch the commit directly, which
+# GitHub permits for any reachable SHA.
+RUN if git ls-remote --exit-code --heads --tags "${VLLM_FORK}" "${VLLM_REF}" >/dev/null 2>&1; then \
+        echo "==> ${VLLM_REF} is a branch or tag"; \
+        git clone --depth 1 --branch "${VLLM_REF}" "${VLLM_FORK}" /src/vllm; \
+    else \
+        echo "==> ${VLLM_REF} is not a branch or tag here; fetching it as a commit SHA"; \
+        git init -q /src/vllm \
+     && git -C /src/vllm remote add origin "${VLLM_FORK}" \
+     && git -C /src/vllm fetch --depth 1 origin "${VLLM_REF}" \
+     && git -C /src/vllm checkout -q FETCH_HEAD; \
+    fi \
  && git clone --recursive --depth 1 --branch "${AITER_REF}" "${AITER_REPO}" /src/aiter \
  && git clone --depth 1 --branch "${AITER_CDNA2_REF}"       "${AITER_CDNA2}" /src/aiter-cdna2 \
  && for d in /src/vllm /src/aiter /src/aiter-cdna2; do \
         git -C "$d" rev-parse HEAD > "$d.sha"; done
+
+# Stage the files that ship WITH the image, preserving their repo-relative paths
+# because test_benchmark_moe_quant_config.py locates benchmark_moe.py relative
+# to itself -- flattening them into one directory is what broke this the first
+# time, since upstream's test_moe.py also imports the `tests` package.
+#
+# Staged here rather than COPY'd straight into the final stage because two of
+# these exist only in the fork, and `COPY --from` of a missing path is a hard
+# build failure. That is exactly why building from upstream used to require
+# commenting out lines in this file. Absence is an ERROR when VLLM_IS_FORK=1 and
+# a loud warning when it is 0 -- never a silent skip.
+RUN set -eu; mkdir -p /src/shipfiles; miss=0; \
+    for f in tests/kernels/attention/test_rocm_paged_attention_long_context.py \
+             tests/model_executor/layers/test_rocm_unquantized_gemm.py \
+             tests/benchmarks/test_benchmark_moe_quant_config.py \
+             benchmarks/kernels/benchmark_moe.py; do \
+        if [ -f "/src/vllm/$f" ]; then \
+            mkdir -p "/src/shipfiles/$(dirname "$f")"; \
+            cp "/src/vllm/$f" "/src/shipfiles/$f"; \
+        else \
+            echo "WARNING: acceptance file not in this tree: $f"; miss=1; \
+        fi; \
+    done; \
+    if [ "$miss" = 1 ] && [ "${VLLM_IS_FORK}" = "1" ]; then \
+        echo "ERROR: files above are missing from a build declared VLLM_IS_FORK=1." >&2; \
+        echo "       Building upstream? set VLLM_IS_FORK=0. Otherwise the fork regressed." >&2; \
+        exit 1; \
+    fi; \
+    echo "==> staged into the image:"; find /src/shipfiles -type f | sort
 
 # ----------------------------------------------------------- csrc-build ------
 # Rebuild vLLM for gfx90a only and emit a wheel. Nothing from this stage reaches
@@ -98,10 +144,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # benchmark_moe.py relative to itself. Flattening these into one directory is
 # what broke it the first time: upstream's test_moe.py also imports the `tests`
 # package, which a single copied file cannot satisfy.
-COPY --from=fetch /src/vllm/tests/kernels/attention/test_rocm_paged_attention_long_context.py /opt/vllm/tests/kernels/attention/
-COPY --from=fetch /src/vllm/tests/model_executor/layers/test_rocm_unquantized_gemm.py         /opt/vllm/tests/model_executor/layers/
-COPY --from=fetch /src/vllm/tests/benchmarks/test_benchmark_moe_quant_config.py               /opt/vllm/tests/benchmarks/
-COPY --from=fetch /src/vllm/benchmarks/kernels/benchmark_moe.py                               /opt/vllm/benchmarks/kernels/
+# Selected and laid out by the fetch stage, which is where a file that exists
+# only in the fork gets handled. One COPY, so an upstream build needs no edit.
+COPY --from=fetch /src/shipfiles/ /opt/vllm/
 COPY probe/probe_image_patches.sh /usr/local/bin/probe-image-patches
 COPY build/verify.sh              /usr/local/bin/verify-image
 COPY build/entrypoint.sh          /usr/local/bin/mi210-entrypoint
