@@ -13,9 +13,9 @@ BASE_IMAGE_TAG_FYI=rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0
 # To build against upstream instead, see BUILDING FROM UPSTREAM below: override
 # on the command line, do not edit these four lines.
 VLLM_FORK=https://github.com/davetha/vllm
-VLLM_REF=v0.26.1rc0+mi210.1   # PEP 440 local version; see build note below
+VLLM_REF=v0.27.2rc0+mi210.1   # PEP 440 local version; see build note below
 VLLM_IS_FORK=1
-VLLM_UPSTREAM_BASE=v0.26.1rc0
+VLLM_UPSTREAM_BASE=v0.27.2rc0
 # The '+' is required, not cosmetic. vLLM builds its version with
 # setuptools_scm, which parses the git tag; a tag like v0.26.1rc0-mi210.1 is
 # not valid PEP 440 and fails metadata generation with
@@ -61,7 +61,20 @@ AITER_REF=v0.1.19
 # The gfx942 -> gfx90a ASM repatcher. Not a source patch: it transforms the
 # code objects AITER ships, because AITER ships none for gfx90a.
 AITER_CDNA2=https://github.com/davetha/aiter-cdna2
-AITER_CDNA2_REF=v1.1   # tagged 2026-08-07; adds enable_aiter_ck_gemm_gfx90a.py
+AITER_CDNA2_REF=v1.3   # tagged 2026-08-14; FA gate + register_ops_once carry the 0.27 spellings
+# v1.1 -> v1.3 carries the vLLM 0.27 spellings. 0.27 rewrote BOTH gate sites --
+# supports_compute_capability became get_cdna_version() > 2, and register_ops_once
+# dropped its decorator for an inlined guard -- so v1.1 aborts add-aiter.sh
+# against this base. Each patch now keeps both spellings and detects which
+# applies; zero matches still aborts rather than shipping a half-patched image.
+#
+# MEASURED 2026-08-14 on Qwen3.8-27B (48/64 GDN linear-attention layers), 2x
+# MI210: enabling AITER changes decode by <0.5% and prefill within noise. Its
+# flash-attention ASM only reaches the 16 full-attention layers, so there is
+# little surface to act on. AITER is NOT a default win -- measure per model.
+# Note VLLM_ROCM_USE_AITER=0 is baked into the image: without -e ...=1 at run
+# time the patches are inert and a benchmark silently compares two Triton runs.
+#
 # v1.0 -> v1.1 is not cosmetic. v1.0 shipped the ATTENTION carve-out only, so
 # every image built from it served int8 checkpoints through vLLM's generic
 # Triton kernel -- correct output, no warning, ~1/3 the decode rate. Confirm

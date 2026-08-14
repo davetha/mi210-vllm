@@ -2,6 +2,14 @@
 # on https://github.com/davetha/vllm, already merged into the tag VERSIONS pins
 # (VLLM_REF), which is what build/Dockerfile clones. See patches/README.md.
 #
+# The -v0.27.2rc0 suffix is the rebase onto that upstream tag. The unsuffixed
+# branches are NOT deleted: they are the v0.26.1rc0 lineage, still reachable
+# from tag v0.26.1rc0+mi210.1, so an older image can still be reproduced.
+#
+# Rebasing was not mechanical. `git apply --3way` reported all five clean, but a
+# real `git rebase` -- which drops already-upstream commits by patch-id --
+# conflicted on three. Trust the rebase, not the apply.
+#
 # Every patch carries two predicates:
 #   obsolete_when  -- true on a new base => DROP the branch, close the PR
 #   verify         -- the test that says it still works
@@ -17,7 +25,7 @@
 # ../upgrade.sh <tag> runs every obsolete_when against a fresh upstream worktree.
 
 - name: rocm-paged-attention
-  branch: rocm-paged-attention-256k
+  branch: rocm-paged-attention-256k-v0.27.2rc0
   upstream: [39001]
   carries: "Eugene Kuznetsov's multi-pass reduction + 3 local gfx90a commits"
   obsolete_when: "grep -q 'npar_loops > 16' csrc/rocm/attention.cu"
@@ -25,14 +33,20 @@
   verify: "pytest tests/kernels/attention/test_rocm_paged_attention_long_context.py"   # 11
 
 - name: wvsplitk-oob
-  branch: rocm-wvsplitk-oob-strided
+  branch: rocm-wvsplitk-oob-strided-v0.27.2rc0
   upstream: [50618]
-  carries: "John Qin / Yanyuan Qin; reproduced on gfx90a before merging"
+  carries: "John Qin / Yanyuan Qin; reproduced on gfx90a before merging.
+    Rebasing onto v0.27.2rc0 collapsed 4 commits into 1: upstream took the
+    original OOB fix (weight guard in skinny_operands_compatible, plus
+    .contiguous() on the reshaped activation), so those commits dropped as
+    already-upstream. What survives is the singleton refinement -- PyTorch's
+    contiguity test ignores singleton dimensions, so .contiguous() is a no-op
+    on a one-row strided slice and upstream's fix does not cover it."
   obsolete_when: "grep -q 'contiguous_format' vllm/model_executor/layers/utils.py"
   verify: "pytest tests/model_executor/layers/test_rocm_unquantized_gemm.py"           # 4
 
 - name: int4-interleave-gfx9
-  branch: rocm-int4-interleave-gfx9
+  branch: rocm-int4-interleave-gfx9-v0.27.2rc0
   upstream: [43389]
   carries: "amd-xavierwang's int4 repack, gate widened from on_gfx1x to include GFX9"
   # If upstream widens it themselves, ours is redundant.
@@ -40,14 +54,14 @@
   verify: "pytest tests/kernels/moe/test_moe.py -k 'wn16 and 4'"                        # 8
 
 - name: sharded-state-tp
-  branch: fix/sharded-state-tp-mismatch
+  branch: fix/sharded-state-tp-mismatch-v0.27.2rc0
   upstream: []
   carries: "local; reject checkpoints saved at a different TP size"
   obsolete_when: "grep -q '_saved_tp_size' vllm/model_executor/model_loader/sharded_state_loader.py"
   verify: "pytest tests/model_executor/model_loader/test_sharded_state_loader.py -k 'saved_tp_size or load_weights or filter_subtensors'"  # 7
 
 - name: benchmark-moe-int8
-  branch: fix-benchmark-moe-int8-w8a16
+  branch: fix-benchmark-moe-int8-w8a16-v0.27.2rc0
   upstream: [31011]   # stale, auto-closed 2026-04-30
   carries: "local, grouping taken from #31011"
   obsolete_when: "! grep -q 'quant_dtype = torch.int8' benchmarks/kernels/benchmark_moe.py"
