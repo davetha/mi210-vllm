@@ -77,3 +77,12 @@
   # branch existing rather than for any behavioural marker.
   obsolete_when: "grep -q 'on_gfx90a' vllm/model_executor/kernels/linear/mixed_precision/triton_w4a16.py"
   verify: "pytest tests/kernels/quantization/test_triton_w4a16.py"                      # if present upstream
+
+- name: w4a16-bittrick-gfx90a
+  branch: rocm-w4a16-bittrick-gfx90a-v0.27.2rc0
+  upstream: []
+  carries: "local; magic-bias dequant + scale hoist for the dense W4A16 GEMM"
+  # Obsolete when upstream stops doing per-weight bf16 arithmetic in this loop.
+  # The marker is the hoist itself, since the bit trick alone is worth little.
+  obsolete_when: "grep -q USE_MAGIC_BIAS vllm/model_executor/kernels/linear/mixed_precision/triton_w4a16.py"
+  verify: "pytest tests/kernels/quantization/test_triton_w4a16.py"
