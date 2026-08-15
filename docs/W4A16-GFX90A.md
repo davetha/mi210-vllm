@@ -81,6 +81,19 @@ Two things that bit during this work and are cheap to repeat:
 - The configs were searched at M=1. Applied to all `M <= 32` they **regress**
   gate_up 125 -> 99 GB/s, because once M fills the machine the small BLOCK_N
   stops buying occupancy and only costs reuse. Hence the `M <= 8` bound.
+  (The bit-trick patch has its own bound on the same shapes, keyed on BLOCK_M
+  rather than M -- see below.)
+
+The magic-bias bound is keyed on **BLOCK_M, not M**, and is structural rather
+than a tuning artifact. The rank-1 correction costs O(BLOCK_M x BLOCK_N) per
+K-tile, while the decode work it removes is O(BLOCK_K x BLOCK_N) and
+independent of BLOCK_M. Saving fixed per K-tile, cost linear in BLOCK_M, so the
+benefit/cost ratio degrades monotonically and a crossover is guaranteed: worse
+at larger tiles, never better, and not recoverable by tuning. M and BLOCK_M
+agree only because of how the current ladder is written; they diverge as soon
+as M is not padded 1:1 to the tile, at which point an M-keyed bound silently
+either disables a profitable path or enables an unprofitable one. Prefill takes
+the plain path for free under this rule.
 - `BLOCK_K=128` only survives because the existing
   `if group_size < BLOCK_K: BLOCK_K = group_size` clamp runs AFTER tile
   selection. Verify group sizes 64 and 32, not just 128; without that clamp the
