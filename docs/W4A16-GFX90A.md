@@ -121,9 +121,21 @@ Time improves only 1.32x per decoder layer (896 -> 681us), because the wall
 moves rather than disappearing -- see the next section. Total against shipped,
 with the tile patch, is 2.13x (1453 -> 681us).
 
-An unreconciled discrepancy, recorded rather than resolved by picking one: the
-shipped baseline measures 14.8-15.6 ops/weight here and 19.1 in the earlier
-profiling run, same counter and formula, most likely a different tile config.
+The 19.1 vs 14.8-15.6 ops/weight discrepancy is RESOLVED: both were right, at
+different tile configs. Measured all three states in one run:
+
+| shape | shipped MI300 tiles | tuned tiles | + bit-trick |
+|---|---|---|---|
+| q_proj | 19.10 | 15.74 | 8.51 |
+| gate_up | 19.10 | 16.20 | 7.33 |
+
+19.10 at the shipped tiles reproduces the original profiling exactly. So the
+tile patch itself already cuts ops/weight -- a larger BLOCK_K amortises
+per-tile setup over more weights -- and the bit-trick then roughly halves it
+again. Full chain from shipped on gate_up is 19.10 -> 7.33, 2.6x.
+
+A corollary worth remembering when reading any ops/weight number in this
+document: it is only meaningful alongside the tile config it was measured at.
 
 V1 is also strictly MORE accurate than the shipped kernel (1.95e-03 vs
 2.49e-03 relative), because the hoist does one multiply per output instead of
@@ -187,6 +199,23 @@ packed bits on CPU; the shipped kernel agrees with it to 3.3e-03, consistent
 with bf16 inputs and fp32-vs-fp64 accumulation. Use that, not a kernel-to-kernel
 diff. Note `set_default_device('cuda')` will silently put a "CPU reference" on
 the GPU -- pin it and assert.
+
+## Tested and rejected: num_stages on the wide-N config
+
+The tile patch sets `num_warps` but leaves `num_stages` at Triton's default of
+2. Against the TILES-ONLY kernel, forcing `num_stages=1` on the wide-N
+(gate_up) config measured 445.4us -> 386.1us, about 1.15%.
+
+That win does not survive the bit-trick. Re-measured on the merged
+tiles+bit-trick kernel, `num_stages=1` gives gate_up 257 -> 252 GB/s at M=1 and
+249 -> 242 at M=8, i.e. slightly WORSE. Removing the dequant cost changes the
+kernel's character enough to invert the tradeoff -- VALUBusy falls 70.7 ->
+35.9% while MemUnitBusy rises to 88.6%, so there is no longer idle issue
+capacity for deeper pipelining to fill.
+
+Recorded because it is a plausible-looking knob that someone will otherwise
+re-try. The general lesson: a tuning result measured against one kernel does
+not transfer to a kernel whose bottleneck has moved.
 
 ## Reproducing
 
