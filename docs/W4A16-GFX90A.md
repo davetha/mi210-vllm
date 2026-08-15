@@ -89,7 +89,77 @@ Two things that bit during this work and are cheap to repeat:
 
 This caps near **17% of ceiling**. No tile choice changes ops-per-weight.
 
-## What was ruled out: magic-bias dequant alone
+## Magic-bias dequant: only works WITH the scale hoist
+
+An earlier revision of this document called magic-bias a dead end. That was
+measured with the per-weight scale multiply still in place, which makes it
+misleading on its own. Corrected here.
+
+**Magic-bias alone changes nothing. Magic-bias plus a scale hoist cuts
+ops/weight by 2.4-3.2x.** The hoist is the essential partner, for an
+architectural reason: **gfx90a has no bf16 VALU arithmetic** -- bf16 is
+MFMA-operand only -- so a per-weight `* scales` forces an fp32 round-trip,
+which is exactly the cost the bit-trick is meant to remove. The trick without
+the hoist just moves work around.
+
+The hoist is legal because `BLOCK_K <= group_size` is already enforced by the
+existing clamp:
+
+    sum_k a_k (n_k - 8) s  ==  s * (dot(a, v) - 136 * rowsum(a)),  v = 128 + n
+
+If that clamp ever moves, the hoist becomes silently wrong.
+
+Measured (rocprofv3, M=1, at the tuned tiles):
+
+| shape | shipped | V1 (bit-trick + hoist) | V2 (+ offline pre-interleave) | cut |
+|---|---|---|---|---|
+| gate_up | 15.57 | 6.19 | 4.94 | 3.2x |
+| q_proj | 14.93 | 7.18 | 6.31 | 2.4x |
+| down_proj | 14.80 | 7.05 | 6.18 | 2.4x |
+
+Time improves only 1.32x per decoder layer (896 -> 681us), because the wall
+moves rather than disappearing -- see the next section. Total against shipped,
+with the tile patch, is 2.13x (1453 -> 681us).
+
+An unreconciled discrepancy, recorded rather than resolved by picking one: the
+shipped baseline measures 14.8-15.6 ops/weight here and 19.1 in the earlier
+profiling run, same counter and formula, most likely a different tile config.
+
+V1 is also strictly MORE accurate than the shipped kernel (1.95e-03 vs
+2.49e-03 relative), because the hoist does one multiply per output instead of
+one per weight. Exactness was shown with a one-hot probe: with `a = e_k` the
+output is exactly row k of the dequantized matrix, which removes accumulation
+error and isolates the dequant. A GEMM-level comparison cannot show this
+because it mixes dequant error with fp32-vs-fp64 accumulation.
+
+No inline asm was needed; Triton already emits `v_perm_b32` and fused and-or
+forms for this on its own.
+
+## The wall after the dequant fix: MFMA operand staging
+
+Cutting the ALU cost did not reach the memory floor. It moved the bottleneck:
+
+    VALUBusy       70.7% -> 35.9%   ALU freed, as designed
+    MemUnitStalled  0.0% ->  0.0%   still not HBM-bound
+    MemUnitBusy    73.4% -> 88.6%   the new wall
+
+The loop is now bound by `tl.dot` staging the B tile through LDS for the MFMA
+operand layout: 16x `ds_read_u16` behind 6 `s_barrier` per iteration. At M=1 a
+16x16x16 MFMA computes 16 output rows in order to use one. The memory unit
+saturates issuing narrow transactions while moving only 388 GB/s.
+
+**The obvious fix was tested and fails.** Dropping `tl.dot` for plain FMAs --
+no LDS, no barriers -- is 1.4-2.4x SLOWER, because Triton's cross-lane
+reduction codegen costs more than the MFMA path it replaces. Reaching the
+memory floor would need a GEMV operand layout with wide `ds_read_b128`-class
+access, which could not be expressed in Triton.
+
+Triton also has no `int32 -> 2x bf16` reinterpret, which costs back roughly
+1.5 ops/weight of the pre-interleave saving. That is why V2 beats V1 by only
+3% in time despite 1.3 fewer ops/weight, and why V2 is not worth an on-disk
+layout change.
+
+## Superseded: magic-bias measured WITHOUT the hoist
 
 The obvious next lever -- replace shift/mask/sub/convert with the Marlin-style
 mantissa trick (`0x4300 | n` read as bf16 is exactly `128+n`, since bf16 has 8
