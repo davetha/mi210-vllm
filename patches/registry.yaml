@@ -66,3 +66,14 @@
   carries: "local, grouping taken from #31011"
   obsolete_when: "! grep -q 'quant_dtype = torch.int8' benchmarks/kernels/benchmark_moe.py"
   verify: "pytest tests/benchmarks/test_benchmark_moe_quant_config.py"                  # 8
+
+- name: w4a16-tiles-gfx90a
+  branch: rocm-w4a16-tiles-gfx90a-v0.27.2rc0
+  upstream: []
+  carries: "local; gfx90a tile table for the dense W4A16 Triton GEMM"
+  # Upstream added a gfx90a branch of its own to this selection. Until then,
+  # gfx90a silently inherits the MI300 tiles, which assume 304 CUs against
+  # MI210's 104 -- the failure is slowness, not breakage, so grep for the
+  # branch existing rather than for any behavioural marker.
+  obsolete_when: "grep -q 'on_gfx90a' vllm/model_executor/kernels/linear/mixed_precision/triton_w4a16.py"
+  verify: "pytest tests/kernels/quantization/test_triton_w4a16.py"                      # if present upstream
