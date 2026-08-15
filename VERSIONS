@@ -13,7 +13,7 @@ BASE_IMAGE_TAG_FYI=rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0
 # To build against upstream instead, see BUILDING FROM UPSTREAM below: override
 # on the command line, do not edit these four lines.
 VLLM_FORK=https://github.com/davetha/vllm
-VLLM_REF=v0.27.2rc0+mi210.2   # PEP 440 local version; see build note below
+VLLM_REF=v0.27.2rc0+mi210.3   # PEP 440 local version; see build note below
 VLLM_IS_FORK=1
 VLLM_UPSTREAM_BASE=v0.27.2rc0
 # The '+' is required, not cosmetic. vLLM builds its version with
