@@ -141,15 +141,27 @@ Frontier's MI250X is gfx90a, the same architecture this image targets.
 This repo stores no binaries and no build artifacts. Every compiled thing in the
 image is produced during the build from a git clone at an immutable tag:
 
+This table mirrors `VERSIONS`, which is authoritative. If the two disagree,
+`VERSIONS` is what gets built and this table is the stale one.
+
 | component | source | how it is built |
 |---|---|---|
-| `_rocm_C` (attention.cu) | `davetha/vllm` @ `v0.26.1rc0+mi210.1` | `pip wheel` in `build/Dockerfile` |
+| `_rocm_C` (attention.cu) | `davetha/vllm` @ `v0.27.2rc0+mi210.5` | `pip wheel` in `build/Dockerfile` |
 | AITER Python + C++ | `ROCm/aiter` @ `v0.1.19` | `pip install --no-build-isolation .` |
-| gfx90a ASM code objects | `davetha/aiter-cdna2` @ `v1.0` | `repatch_gfx942_to_gfx90a.py`, at build time |
+| gfx90a ASM code objects | `davetha/aiter-cdna2` @ `v1.3` | `repatch_gfx942_to_gfx90a.py`, at build time |
 
 `.github/workflows/sources-only.yml` enforces this rather than asserting it: it
 rejects any committed binary or file over 256 KiB, requires `BASE_IMAGE` to be
 digest-pinned, and checks that all three refs still resolve as tags.
+
+One caveat on that last check, because it is narrower than it sounds: it
+validates the refs in `VERSIONS`, not the ones written above. Both cells were
+wrong for a while and CI stayed green, because a stale value can still be a
+real tag. The `aiter-cdna2` one mattered — `VERSIONS` records that v1.0 shipped
+the ATTENTION carve-out only, so images built from it served int8 checkpoints
+through the generic Triton kernel at roughly a third of the decode rate, with no
+warning. Treat a mismatch here as a bug in this table, and check it by eye
+against `VERSIONS` rather than trusting the job to catch it.
 
 ### The one exception, and it is upstream's
 
