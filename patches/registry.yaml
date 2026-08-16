@@ -1,6 +1,30 @@
 # INDEX ONLY -- no diffs live in this directory. Each `branch` below is a branch
-# on https://github.com/davetha/vllm, already merged into the tag VERSIONS pins
-# (VLLM_REF), which is what build/Dockerfile clones. See patches/README.md.
+# on https://github.com/davetha/vllm. All but one have their CONTENT in the tag
+# VERSIONS pins (VLLM_REF), which is what build/Dockerfile clones.
+#
+# THE EXCEPTION: nvfp4-w4a16-gfx90a is POST-TAG. Its branch is 4 commits ahead of
+# v0.27.2rc0+mi210.5 and the kernel file it adds
+# (vllm/model_executor/kernels/linear/nvfp4/triton_gfx90a.py) does not exist at
+# that tag, so it is in NO image built from the current pin. It is indexed here
+# anyway, marked `status: post-tag`, so it is not lost between pins -- but do not
+# read this file as "everything below ships".
+#
+# CONTENT-IN-TAG AND COMMIT-IN-TAG ARE DIFFERENT QUESTIONS, and this file answers
+# the first. Two branches -- rocm-w4a16-tiles-gfx90a and
+# rocm-w4a16-bittrick-gfx90a -- have tips that are NOT ancestors of the tag,
+# because assembling the mi210.5 wave re-applied them under new SHAs. Their
+# content did ship (grep the tag itself, below); the branch tips are just stale.
+# So `merge-base --is-ancestor` is the wrong test here and will mislead you:
+#
+#   # what actually shipped -- ask the tag, not the branch
+#   git -C <fork> show $VLLM_REF:vllm/model_executor/kernels/linear/mixed_precision/triton_w4a16.py \
+#     | grep -c 'elif on_gfx90a():'
+#
+# .github/workflows/sources-only.yml's registry-matches-fork job asks the
+# commit-identity question (ahead_by == 0) and therefore flags all three. One of
+# those three is real (NVFP4); two are stale branch tips to re-point or delete.
+#
+# See patches/README.md.
 #
 # The -v0.27.2rc0 suffix is the rebase onto that upstream tag. The unsuffixed
 # branches are NOT deleted: they are the v0.26.1rc0 lineage, still reachable
@@ -18,9 +42,10 @@
 # on 2026-08-04 took hours; they are written down so it never costs that again.
 # Dropping a patch is the GOOD outcome: it means the work landed upstream.
 #
-# Five branches, seven changes: rocm-paged-attention-256k carries the multi-pass
+# Ten branches, twelve changes: rocm-paged-attention-256k carries the multi-pass
 # reduction plus three local gfx90a commits, which README lists separately
-# because they are separately justified.
+# because they are separately justified. (It was five branches / seven changes
+# through mi210.1; the five W4A16/FP8/NVFP4 entries below are the mi210.5 wave.)
 #
 # ../upgrade.sh <tag> runs every obsolete_when against a fresh upstream worktree.
 
@@ -87,10 +112,9 @@
   obsolete_when: "grep -q USE_MAGIC_BIAS vllm/model_executor/kernels/linear/mixed_precision/triton_w4a16.py"
   verify: "pytest tests/kernels/quantization/test_triton_w4a16.py"
 
-# DRAFT additions to patches/registry.yaml -- NOT applied to the real file.
-# Three new entries below, in the same schema as the existing seven. Append
-# to the end of the real registry.yaml at ship time (after the existing
-# w4a16-bittrick-gfx90a entry).
+# ---- mi210.5 wave: FP8 W8A16, the W4A16 narrow rung, and NVFP4 -------------
+# Shipped, not draft. (This header used to read "DRAFT ... NOT applied to the
+# real file" while sitting in the real file; the entries below were applied.)
 #
 # Branch topology, final: the FP8 branch (rocm-wfp8a16-gfx90a-v0.27.2rc0) is
 # 6 commits ending a28f57dea8 (3f657e07fb..a28f57dea8; a28f57dea8 amends an
@@ -165,6 +189,13 @@
 - name: nvfp4-w4a16-gfx90a
   branch: rocm-nvfp4-a16-gfx90a-v0.27.2rc0
   upstream: []
+  # NOT in VLLM_REF, in content as well as in commits: 4 commits ahead of
+  # v0.27.2rc0+mi210.5 (d34d58f726..a23149ed0f), and
+  # vllm/model_executor/kernels/linear/nvfp4/triton_gfx90a.py does not exist at
+  # that tag -- checked against the tag's own tree, not inferred from the branch.
+  # No image built from the current pin contains this. Indexed ahead of the pin
+  # that will carry it -- clear this line when VLLM_REF moves past a23149ed0f.
+  status: post-tag
   carries: "local; Triton NVFP4 W4A16 GEMM for gfx90a (packed e2m1 weight
     decode via the same bias-shift bit trick as the FP8 kernel, per-16-group
     e4m3 block scale + scalar global scale, ported from the measured
