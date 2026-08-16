@@ -101,11 +101,24 @@ jobs:
           set -a; . ./VERSIONS; set +a
           repo=${VLLM_FORK#https://github.com/}
           fail=0
-          # `branch:` lines only -- registry.yaml has no other key ending in a
-          # bare ref, and grep is enough for a file this shape.
-          branches=$(sed -n 's/^[[:space:]]*branch:[[:space:]]*\(.*\)$/\1/p' patches/registry.yaml)
-          [ -n "$branches" ] || { echo "::error::no branches parsed from registry.yaml"; exit 1; }
-          for b in $branches; do
+          # Each entry's `branch:` plus its `status:`, if it has one. This was a
+          # sed over `branch:` lines, which cannot tell which entry a status
+          # belongs to -- and an entry deliberately ahead of the pin has to be
+          # distinguishable from one that drifted, or the job is red by design
+          # and stops being read.
+          entries=$(python3 - <<'PY'
+          import re
+          text = open("patches/registry.yaml").read()
+          for block in text.split("\n- name:")[1:]:
+              b = re.search(r'^\s*branch:\s*(\S+)', block, re.M)
+              st = re.search(r'^\s*status:\s*(\S+)', block, re.M)
+              if b:
+                  print(b.group(1), st.group(1) if st else "in-tag")
+          PY
+          )
+          [ -n "$entries" ] || { echo "::error::no branches parsed from registry.yaml"; exit 1; }
+          while read -r b status; do
+            [ -n "$b" ] || continue
             if ! git ls-remote --heads --exit-code "$VLLM_FORK" "refs/heads/$b" >/dev/null 2>&1; then
               echo "::error::registry lists $b, which does not exist on $VLLM_FORK"
               fail=1; continue
@@ -115,11 +128,20 @@ jobs:
             ahead=$(curl -sfL -H "Authorization: Bearer ${{ github.token }}" \
               "https://api.github.com/repos/$repo/compare/$VLLM_REF...$b" \
               | python3 -c 'import json,sys; print(json.load(sys.stdin).get("ahead_by","?"))')
-            if [ "$ahead" = "0" ]; then
+            if [ "$ahead" = "0" ] && [ "$status" = "post-tag" ]; then
+              # The pin caught up. The marker is now a lie in the other
+              # direction, so say so rather than passing quietly.
+              echo "::error::$b is contained in $VLLM_REF but is still marked 'status: post-tag' in registry.yaml; remove the marker"
+              fail=1
+            elif [ "$ahead" = "0" ]; then
               echo "ok  $b is contained in $VLLM_REF"
+            elif [ "$status" = "post-tag" ]; then
+              # Declared ahead of the pin on purpose. Not an error, but never
+              # silent: an image built from this VERSIONS does not carry it.
+              echo "::notice::$b is $ahead commit(s) ahead of $VLLM_REF -- expected, marked 'status: post-tag'. Images built from this pin do NOT carry it."
             else
               echo "::error::$b has $ahead commit(s) NOT in $VLLM_REF; the image does not carry it"
               fail=1
             fi
-          done
+          done <<< "$entries"
           exit $fail
