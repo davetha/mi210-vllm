@@ -42,7 +42,7 @@ becomes unnecessary**, and **which test proves it still works**.
 upstream worktree and prints UPSTREAMED or STILL NEEDED per patch. That is the
 whole reason the registry exists — without it, every upgrade is archaeology.
 
-Ten branches, twelve changes: `rocm-paged-attention-256k` carries the multi-pass
+Eleven branches, thirteen changes: `rocm-paged-attention-256k` carries the multi-pass
 reduction plus three local gfx90a commits, which the README table lists
 separately because they are separately justified. (Five branches / seven changes
 was the mi210.1 shape; the W4A16, FP8 and NVFP4 entries are the mi210.5 wave.)

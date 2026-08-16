@@ -26,6 +26,7 @@ at build time, and documented with the measurements that justify them.
 | W4A16 gfx90a tile table | local | gfx90a inherited the MI300 tiles, which assume 304 CUs against MI210's 104 |
 | W4A16 magic-bias dequant | local | bit-trick dequant + scale hoist in the dense W4A16 GEMM inner loop; gfx90a has no bf16 VALU arithmetic |
 | W4A16 narrow rung to M≤16 | local | 1.37–1.45x GB/s on M=9..16, by keeping the narrow tile active over that range instead of dropping to BLOCK_M=64 |
+| W4A16 magic-bias gate on BLOCK_M | local | keys the gate on the tile rather than on M, where the cost crossover actually lives, so a future ladder change cannot silently mis-enable it |
 | fp8 W8A16 Triton kernel | local | first ROCm entry in `_POSSIBLE_WFP8A16_KERNELS` (upstream ships that list empty), plus the CDNA2 dispatcher fix that was routing fp8 checkpoints into a `torch._scaled_mm` crash |
 | NVFP4 W4A16 Triton kernel | local | packed e2m1 decode + per-16-group scales for gfx90a — **not in the pinned tag**: this one is post-`VLLM_REF`, so it is not in an image built from `VERSIONS` as it stands (see `patches/registry.yaml`) |
 

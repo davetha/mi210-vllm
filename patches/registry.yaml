@@ -42,7 +42,7 @@
 # on 2026-08-04 took hours; they are written down so it never costs that again.
 # Dropping a patch is the GOOD outcome: it means the work landed upstream.
 #
-# Ten branches, twelve changes: rocm-paged-attention-256k carries the multi-pass
+# Eleven branches, thirteen changes: rocm-paged-attention-256k carries the multi-pass
 # reduction plus three local gfx90a commits, which README lists separately
 # because they are separately justified. (It was five branches / seven changes
 # through mi210.1; the five W4A16/FP8/NVFP4 entries below are the mi210.5 wave.)
@@ -111,6 +111,39 @@
   # The marker is the hoist itself, since the bit trick alone is worth little.
   obsolete_when: "grep -q USE_MAGIC_BIAS vllm/model_executor/kernels/linear/mixed_precision/triton_w4a16.py"
   verify: "pytest tests/kernels/quantization/test_triton_w4a16.py"
+
+- name: w4a16-blockm-gate-gfx90a
+  branch: rocm-w4a16-blockm-gate-v0.27.2rc0
+  upstream: []
+  carries: "local; re-keys the magic-bias gate above on BLOCK_M instead of M
+    (commit 99e8661129), and widens it from M<=8 to BLOCK_M<=16. Not
+    independent of w4a16-bittrick-gfx90a: it edits that patch's
+    _use_magic_bias, and means nothing without it. The bound is structural,
+    not a tuning artifact -- the rank-1 correction costs O(BLOCK_M x BLOCK_N)
+    per K-tile while the decode work it removes is O(BLOCK_K x BLOCK_N) and
+    independent of BLOCK_M, so the benefit/cost ratio degrades monotonically
+    and a crossover is guaranteed. Measured 1.56x/1.52x on gate_up at
+    BLOCK_M=16 against 0.77-0.96x at BLOCK_M=64. Keying on M agreed with this
+    only because of how the tile ladder happens to be written today; the two
+    diverge as soon as M is not padded 1:1 to the tile, so a ladder change
+    would silently break an M-keyed bound in either direction."
+  # Greps the SIGNATURE, not the bound. Every other W4A16 entry here greps a
+  # behavioural marker, but this patch's claim is the keying rather than the
+  # threshold -- and the threshold has already moved once (8 -> 16, see
+  # w4a16-narrow-m16-gfx90a), so a bound-shaped grep would go stale on our own
+  # next change rather than on upstream's. Obsolete once upstream keys its own
+  # magic-bias path on the block size, whatever bound it picks.
+  obsolete_when: "grep -q 'def _use_magic_bias(.*block_m' vllm/model_executor/kernels/linear/mixed_precision/triton_w4a16.py"
+  # Same suite as the other two W4A16 entries, and it is a real test of the
+  # PATHS: test_triton_w4a16_gemm_matches_reference parametrises M over
+  # 1/17/32/33/64/128, which on the gfx90a ladder is BLOCK_M 16/64/64/128/64/
+  # 128 -- so M=1 goes through the magic-bias path and the rest through the
+  # plain one, both checked against a float32 reference. It does NOT pin the
+  # KEYING: no in-tree test asserts the gate is True at BLOCK_M=16 and False
+  # at 32/64/128, which is the thing this commit actually changed. That was
+  # verified on the cards at commit time and is not regression-guarded.
+  # TODO: add a gate-level unit test so this line covers the claim it implies.
+  verify: "pytest tests/kernels/quantization/test_triton_w4a16.py   # covers both paths numerically; does NOT pin the BLOCK_M keying"
 
 # ---- mi210.5 wave: FP8 W8A16, the W4A16 narrow rung, and NVFP4 -------------
 # Shipped, not draft. (This header used to read "DRAFT ... NOT applied to the
