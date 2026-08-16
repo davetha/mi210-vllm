@@ -23,6 +23,15 @@ at build time, and documented with the measurements that justify them.
 | wvSplitK stride guard | [vllm#50618](https://github.com/vllm-project/vllm/pull/50618) (John Qin / Yanyuan Qin) | fixes an out-of-bounds read on strided activations |
 | sharded_state TP guard | local | rejects checkpoints saved at a different TP size instead of half-loading them |
 | benchmark_moe int8_w8a16 | local, grouping from [vllm#31011](https://github.com/vllm-project/vllm/pull/31011) | the tuner could not run at all before this |
+| W4A16 gfx90a tile table | local | gfx90a inherited the MI300 tiles, which assume 304 CUs against MI210's 104 |
+| W4A16 magic-bias dequant | local | bit-trick dequant + scale hoist in the dense W4A16 GEMM inner loop; gfx90a has no bf16 VALU arithmetic |
+| W4A16 narrow rung to M≤16 | local | 1.37–1.45x GB/s on M=9..16, by keeping the narrow tile active over that range instead of dropping to BLOCK_M=64 |
+| fp8 W8A16 Triton kernel | local | first ROCm entry in `_POSSIBLE_WFP8A16_KERNELS` (upstream ships that list empty), plus the CDNA2 dispatcher fix that was routing fp8 checkpoints into a `torch._scaled_mm` crash |
+| NVFP4 W4A16 Triton kernel | local | packed e2m1 decode + per-16-group scales for gfx90a — **not in the pinned tag**: this one is post-`VLLM_REF`, so it is not in an image built from `VERSIONS` as it stands (see `patches/registry.yaml`) |
+
+Every row except the last is in the tag `VERSIONS` pins and therefore in any
+image built from it. The NVFP4 row is not: it is marked `status: post-tag` in
+`patches/registry.yaml` and lands in the next pin.
 
 Measurements behind each are in the commit messages on
 [davetha/vllm](https://github.com/davetha/vllm), and the investigation history is
