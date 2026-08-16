@@ -23,6 +23,15 @@ at build time, and documented with the measurements that justify them.
 | wvSplitK stride guard | [vllm#50618](https://github.com/vllm-project/vllm/pull/50618) (John Qin / Yanyuan Qin) | fixes an out-of-bounds read on strided activations |
 | sharded_state TP guard | local | rejects checkpoints saved at a different TP size instead of half-loading them |
 | benchmark_moe int8_w8a16 | local, grouping from [vllm#31011](https://github.com/vllm-project/vllm/pull/31011) | the tuner could not run at all before this |
+| W4A16 gfx90a tile table | local | gfx90a inherited the MI300 tiles, which assume 304 CUs against MI210's 104 |
+| W4A16 magic-bias dequant | local | bit-trick dequant + scale hoist in the dense W4A16 GEMM inner loop; gfx90a has no bf16 VALU arithmetic |
+| W4A16 narrow rung to M≤16 | local | 1.37–1.45x GB/s on M=9..16, by keeping the narrow tile active over that range instead of dropping to BLOCK_M=64 |
+| fp8 W8A16 Triton kernel | local | first ROCm entry in `_POSSIBLE_WFP8A16_KERNELS` (upstream ships that list empty), plus the CDNA2 dispatcher fix that was routing fp8 checkpoints into a `torch._scaled_mm` crash |
+| NVFP4 W4A16 Triton kernel | local | packed e2m1 decode + per-16-group scales for gfx90a — **not in the pinned tag**: this one is post-`VLLM_REF`, so it is not in an image built from `VERSIONS` as it stands (see `patches/registry.yaml`) |
+
+Every row except the last is in the tag `VERSIONS` pins and therefore in any
+image built from it. The NVFP4 row is not: it is marked `status: post-tag` in
+`patches/registry.yaml` and lands in the next pin.
 
 Measurements behind each are in the commit messages on
 [davetha/vllm](https://github.com/davetha/vllm), and the investigation history is
@@ -132,15 +141,27 @@ Frontier's MI250X is gfx90a, the same architecture this image targets.
 This repo stores no binaries and no build artifacts. Every compiled thing in the
 image is produced during the build from a git clone at an immutable tag:
 
+This table mirrors `VERSIONS`, which is authoritative. If the two disagree,
+`VERSIONS` is what gets built and this table is the stale one.
+
 | component | source | how it is built |
 |---|---|---|
-| `_rocm_C` (attention.cu) | `davetha/vllm` @ `v0.26.1rc0+mi210.1` | `pip wheel` in `build/Dockerfile` |
+| `_rocm_C` (attention.cu) | `davetha/vllm` @ `v0.27.2rc0+mi210.5` | `pip wheel` in `build/Dockerfile` |
 | AITER Python + C++ | `ROCm/aiter` @ `v0.1.19` | `pip install --no-build-isolation .` |
-| gfx90a ASM code objects | `davetha/aiter-cdna2` @ `v1.0` | `repatch_gfx942_to_gfx90a.py`, at build time |
+| gfx90a ASM code objects | `davetha/aiter-cdna2` @ `v1.3` | `repatch_gfx942_to_gfx90a.py`, at build time |
 
 `.github/workflows/sources-only.yml` enforces this rather than asserting it: it
 rejects any committed binary or file over 256 KiB, requires `BASE_IMAGE` to be
 digest-pinned, and checks that all three refs still resolve as tags.
+
+One caveat on that last check, because it is narrower than it sounds: it
+validates the refs in `VERSIONS`, not the ones written above. Both cells were
+wrong for a while and CI stayed green, because a stale value can still be a
+real tag. The `aiter-cdna2` one mattered — `VERSIONS` records that v1.0 shipped
+the ATTENTION carve-out only, so images built from it served int8 checkpoints
+through the generic Triton kernel at roughly a third of the decode rate, with no
+warning. Treat a mismatch here as a bug in this table, and check it by eye
+against `VERSIONS` rather than trusting the job to catch it.
 
 ### The one exception, and it is upstream's
 

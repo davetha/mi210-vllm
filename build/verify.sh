@@ -54,6 +54,45 @@ gate "int4 interleave enabled on GFX9" \
      "grep -q 'on_gfx1x() or on_gfx9()' $SP/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_wna16.py"
 gate "wvSplitK stride guard present" \
      "grep -q 'contiguous_format' $SP/model_executor/layers/utils.py"
+
+# The mi210.5 wave (patches/registry.yaml: w8a16-fp8-gfx90a,
+# w4a16-tiles-gfx90a, w4a16-bittrick-gfx90a, w4a16-narrow-m16-gfx90a). Until
+# these existed, an image could be missing the entire wave and still pass tier
+# 0 green, which is the same "patched-looking but slow" failure the top of this
+# file describes -- none of these fail loudly at run time, they just route to a
+# slower or wrong-shaped kernel. Confirmed discriminating: all six pass on an
+# image built from v0.27.2rc0+mi210.5 and all six fail on one built from
+# v0.27.2rc0 with the wave absent.
+gate "fp8 W8A16 Triton kernel source present" \
+     "test -f $SP/model_executor/kernels/linear/scaled_mm/triton_fp8_w8a16.py"
+# The file existing does not mean the dispatcher will ever reach it: upstream
+# ships _POSSIBLE_WFP8A16_KERNELS[ROCM] as an empty '# To be added' list, so
+# check membership rather than grepping for the class name (which also matches
+# the import and the __all__ entry).
+gate "fp8 W8A16 kernel registered for ROCm" \
+     "$PY -c \"from vllm.model_executor.kernels.linear import _POSSIBLE_WFP8A16_KERNELS as K;from vllm.platforms.interface import PlatformEnum as P;from vllm.model_executor.kernels.linear.scaled_mm.triton_fp8_w8a16 import TritonW8A16Fp8LinearKernel as T;assert T in K[P.ROCM]\""
+# Without this, a CUDA-shaped get_device_capability() threshold clears on
+# gfx90a's (9,0) numbering and routes fp8 checkpoints into a torch._scaled_mm
+# crash instead of the weight-only scheme.
+gate "CDNA2 fp8 W8A8->W8A16 dispatcher fallback present" \
+     "grep -q 'get_cdna_version() <= 2 and not on_rdna4()' $SP/model_executor/layers/quantization/compressed_tensors/compressed_tensors.py"
+# Absent, gfx90a silently inherits the MI300 tiles (304 CUs assumed vs 104).
+gate "W4A16 gfx90a tile table present" \
+     "grep -q 'elif on_gfx90a():' $SP/model_executor/kernels/linear/mixed_precision/triton_w4a16.py"
+gate "W4A16 magic-bias dequant path present" \
+     "grep -q USE_MAGIC_BIAS $SP/model_executor/kernels/linear/mixed_precision/triton_w4a16.py"
+gate "W4A16 narrow rung widened to M<=16" \
+     "grep -q 'if M <= 16:' $SP/model_executor/kernels/linear/mixed_precision/triton_w4a16.py"
+# nvfp4-w4a16-gfx90a is POST-TAG: its branch is ahead of VLLM_REF, so a correct
+# image built from the current pin does NOT have it. Reported, never gated --
+# gating it would fail every legitimate build. Flip this to a gate() when
+# VLLM_REF moves past a23149ed0f.
+if [ -f "$SP/model_executor/kernels/linear/nvfp4/triton_gfx90a.py" ]; then
+    note "nvfp4 gfx90a kernel present" "OK"
+else
+    note "nvfp4 gfx90a kernel" "ABSENT (post-tag; not in VLLM_REF)"
+fi
+
 # AITER is optional and added later by build/add-aiter.sh, so this reports
 # rather than gates. An image without it is fully functional; it just does not
 # reach the ASM attention paths.
