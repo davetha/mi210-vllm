@@ -307,9 +307,15 @@
   # Deliberately not a grep for the gate in rocm.py: upstream could remove the
   # block_size restriction without fixing the kernel, and dropping this patch on
   # that basis would reintroduce silent order-1 errors.
-  # Single-quoted: the grep pattern contains a backslash-escaped asterisk, and
-  # YAML double quotes would treat \* as an escape sequence.
-  obsolete_when: '! grep -q "kphysical_block_offset = klocal_token_idx % block_size" csrc/rocm/attention.cu && ! grep -q "((rowid \* VTOKENS_PER_LANE) % block_size)" csrc/rocm/attention.cu'
+  # This patch fixes a kernel that does not exist upstream, so a bare "is the
+  # buggy line gone" test is ALWAYS true against an upstream worktree and would
+  # report the patch as droppable every single upgrade. It becomes obsolete only
+  # if upstream gains the free kernel AND that copy is already fixed, so require
+  # both. Verified against v0.28.0rc2: reports STILL NEEDED, where the bare form
+  # reported UPSTREAMED.
+  # Single-quoted: the pattern contains a backslash-escaped asterisk, and YAML
+  # double quotes would treat \* as an escape sequence.
+  obsolete_when: 'grep -q "_free_kernel" csrc/rocm/attention.cu && ! grep -q "kphysical_block_offset = klocal_token_idx % block_size" csrc/rocm/attention.cu && ! grep -q "((rowid \* VTOKENS_PER_LANE) % block_size)" csrc/rocm/attention.cu'
   verify: "pytest tests/kernels/attention/test_rocm_free_paged_attention_block_sizes.py"
 
 - name: triton-pa-seq-partition

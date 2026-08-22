@@ -33,23 +33,42 @@ trap 'git worktree remove --force "$WT" 2>/dev/null' EXIT
 printf '%-24s %-14s %s\n' PATCH STATUS NOTE
 printf '%-24s %-14s %s\n' ----- ------ ----
 REGISTRY="$REGISTRY" NEW="$NEW" python3 - "$WT" <<'PY'
-import os, re, subprocess, sys
+import os, subprocess, sys
+
+import yaml
 
 wt = sys.argv[1]
 new = os.environ["NEW"]
 text = open(os.environ["REGISTRY"]).read()
 
-for block in text.split("\n- name:")[1:]:
-    name = block.splitlines()[0].strip()
-    bm = re.search(r'^\s*branch:\s*(\S+)', block, re.M)
-    branch = bm.group(1) if bm else "<branch?>"
-    m = re.search(r'obsolete_when:\s*"?(.*?)"?\s*$', block, re.M)
-    if not m:
+# Parse the registry as YAML, not with a regex over the raw file.
+#
+# The regex version -- re.search(r'obsolete_when:\s*"?(.*?)"?\s*$') -- read the
+# file text verbatim, so YAML escapes never got decoded: a double-quoted scalar
+# containing \" or \\[ reached the shell with its backslashes intact, and a
+# single-quoted scalar kept its leading quote. The resulting greps matched
+# nothing. Because predicates are conventionally written as `! grep ...`, a
+# predicate that fails to match -- or errors outright -- INVERTS TO ZERO, which
+# this script reports as UPSTREAMED. Combined with stderr going to DEVNULL, a
+# broken predicate silently recommended deleting a patch that was still needed.
+# Measured against v0.28.0rc2: four of fourteen patches were wrongly reported
+# UPSTREAMED, including two whose PRs had been opened the same day.
+#
+# Predicate stderr is now surfaced rather than swallowed, so a predicate that
+# errors is visible instead of masquerading as a verdict.
+for entry in yaml.safe_load(text):
+    name = entry.get("name", "<name?>")
+    branch = entry.get("branch", "<branch?>")
+    pred = entry.get("obsolete_when")
+    if not pred:
         print(f"{name:<24} {'NO PREDICATE':<14} add obsolete_when to registry.yaml")
         continue
-    ok = subprocess.run(m.group(1), shell=True, cwd=wt,
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
-    if ok:
+    r = subprocess.run(pred, shell=True, cwd=wt, capture_output=True, text=True)
+    err = (r.stderr or "").strip().splitlines()
+    if err:
+        print(f"{name:<24} {'PREDICATE ERR':<14} {err[0][:60]}")
+        continue
+    if r.returncode == 0:
         print(f"{name:<24} {'UPSTREAMED':<14} drop {branch}, close the PR")
     else:
         print(f"{name:<24} {'STILL NEEDED':<14} git rebase --onto {new} <old-base> {branch}")
