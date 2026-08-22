@@ -69,7 +69,7 @@ AITER_REF=v0.1.19
 # The gfx942 -> gfx90a ASM repatcher. Not a source patch: it transforms the
 # code objects AITER ships, because AITER ships none for gfx90a.
 AITER_CDNA2=https://github.com/davetha/aiter-cdna2
-AITER_CDNA2_REF=v1.3   # tagged 2026-08-14; FA gate + register_ops_once carry the 0.27 spellings
+AITER_CDNA2_REF=v1.4   # tagged 2026-08-14; FA gate + register_ops_once carry the 0.27 spellings
 # v1.1 -> v1.3 carries the vLLM 0.27 spellings. 0.27 rewrote BOTH gate sites --
 # supports_compute_capability became get_cdna_version() > 2, and register_ops_once
 # dropped its decorator for an inlined guard -- so v1.1 aborts add-aiter.sh
