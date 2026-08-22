@@ -50,7 +50,7 @@
 # ../upgrade.sh <tag> runs every obsolete_when against a fresh upstream worktree.
 
 - name: rocm-paged-attention
-  branch: rocm-paged-attention-256k-v0.27.2rc0
+  branch: rocm-paged-attention-256k-v0.28.0rc2
   upstream: [39001]
   carries: "Eugene Kuznetsov's multi-pass reduction + 3 local gfx90a commits"
   obsolete_when: "grep -q 'npar_loops > 16' csrc/rocm/attention.cu"
@@ -58,7 +58,7 @@
   verify: "pytest tests/kernels/attention/test_rocm_paged_attention_long_context.py"   # 11
 
 - name: wvsplitk-oob
-  branch: rocm-wvsplitk-oob-strided-v0.27.2rc0
+  branch: rocm-wvsplitk-oob-strided-v0.28.0rc2
   upstream: [50618]
   carries: "John Qin / Yanyuan Qin; reproduced on gfx90a before merging.
     Rebasing onto v0.27.2rc0 collapsed 4 commits into 1: upstream took the
@@ -71,7 +71,7 @@
   verify: "pytest tests/model_executor/layers/test_rocm_unquantized_gemm.py"           # 4
 
 - name: int4-interleave-gfx9
-  branch: rocm-int4-interleave-gfx9-v0.27.2rc0
+  branch: rocm-int4-interleave-gfx9-v0.28.0rc2
   upstream: [43389]
   carries: "amd-xavierwang's int4 repack, gate widened from on_gfx1x to include GFX9"
   # If upstream widens it themselves, ours is redundant.
@@ -79,21 +79,21 @@
   verify: "pytest tests/kernels/moe/test_moe.py -k 'wn16 and 4'"                        # 8
 
 - name: sharded-state-tp
-  branch: fix/sharded-state-tp-mismatch-v0.27.2rc0
+  branch: fix/sharded-state-tp-mismatch-v0.28.0rc2
   upstream: []
   carries: "local; reject checkpoints saved at a different TP size"
   obsolete_when: "grep -q '_saved_tp_size' vllm/model_executor/model_loader/sharded_state_loader.py"
   verify: "pytest tests/model_executor/model_loader/test_sharded_state_loader.py -k 'saved_tp_size or load_weights or filter_subtensors'"  # 7
 
 - name: benchmark-moe-int8
-  branch: fix-benchmark-moe-int8-w8a16-v0.27.2rc0
+  branch: fix-benchmark-moe-int8-w8a16-v0.28.0rc2
   upstream: [31011]   # stale, auto-closed 2026-04-30
   carries: "local, grouping taken from #31011"
   obsolete_when: "! grep -q 'quant_dtype = torch.int8' benchmarks/kernels/benchmark_moe.py"
   verify: "pytest tests/benchmarks/test_benchmark_moe_quant_config.py"                  # 8
 
 - name: w4a16-tiles-gfx90a
-  branch: rocm-w4a16-tiles-gfx90a-v0.27.2rc0
+  branch: rocm-w4a16-tiles-gfx90a-v0.28.0rc2
   upstream: []
   carries: "local; gfx90a tile table for the dense W4A16 Triton GEMM"
   # Upstream added a gfx90a branch of its own to this selection. Until then,
@@ -104,7 +104,7 @@
   verify: "pytest tests/kernels/quantization/test_triton_w4a16.py"                      # if present upstream
 
 - name: w4a16-bittrick-gfx90a
-  branch: rocm-w4a16-bittrick-gfx90a-v0.27.2rc0
+  branch: rocm-w4a16-bittrick-gfx90a-v0.28.0rc2
   upstream: []
   carries: "local; magic-bias dequant + scale hoist for the dense W4A16 GEMM"
   # Obsolete when upstream stops doing per-weight bf16 arithmetic in this loop.
@@ -113,7 +113,7 @@
   verify: "pytest tests/kernels/quantization/test_triton_w4a16.py"
 
 - name: w4a16-blockm-gate-gfx90a
-  branch: rocm-w4a16-blockm-gate-v0.27.2rc0
+  branch: rocm-w4a16-blockm-gate-v0.28.0rc2
   upstream: []
   carries: "local; re-keys the magic-bias gate above on BLOCK_M instead of M
     (commit 99e8661129), and widens it from M<=8 to BLOCK_M<=16. Not
@@ -149,18 +149,18 @@
 # Shipped, not draft. (This header used to read "DRAFT ... NOT applied to the
 # real file" while sitting in the real file; the entries below were applied.)
 #
-# Branch topology, final: the FP8 branch (rocm-wfp8a16-gfx90a-v0.27.2rc0) is
+# Branch topology, final: the FP8 branch (rocm-wfp8a16-gfx90a-v0.28.0rc2) is
 # 6 commits ending a28f57dea8 (3f657e07fb..a28f57dea8; a28f57dea8 amends an
 # earlier tip, 96be2e3c58, after a sampling-methodology correction to the
 # tile ladder -- see docs/FP8-GFX90A.md's Tile ladder section). The W4A16
 # M<=16 narrow-rung commit that used to sit on this same branch in violation of
 # the one-branch-per-patch rule is resolved: it is 3e17cd4213, cherry-picked
-# off this branch onto its own dedicated branch, rocm-w4a16-gfx90a-v0.27.2rc0
+# off this branch onto its own dedicated branch, rocm-w4a16-gfx90a-v0.28.0rc2
 # -- see the new w4a16-narrow-m16-gfx90a entry below. No longer a flagged
 # decision; done.
 
 - name: w8a16-fp8-gfx90a
-  branch: rocm-wfp8a16-gfx90a-v0.27.2rc0
+  branch: rocm-wfp8a16-gfx90a-v0.28.0rc2
   upstream: []
   carries: "local; fused Triton W8A16 fp8 GEMM for gfx90a (dequant e4m3fn
     weights in the GEMM inner loop, bf16-native decode by default with a
@@ -198,7 +198,7 @@
   verify: "python3 /home/dave/fp8-oracle/verify_kernel_gpu.py   # TODO: no in-tree pytest yet"
 
 - name: w4a16-narrow-m16-gfx90a
-  branch: rocm-w4a16-gfx90a-v0.27.2rc0
+  branch: rocm-w4a16-gfx90a-v0.28.0rc2
   upstream: []
   carries: "local; extends the dense W4A16 Triton GEMM's gfx90a narrow rung
     from M<=8 to M<=16 (commit 3e17cd4213), recovering 1.37-1.45x GB/s on
@@ -208,7 +208,7 @@
     (keyed on BLOCK_M<=16), measured separately from the tile change itself
     since the two effects have opposite sign on gate_up. Correctness
     against a float64 oracle: 1.1e-06/1.6e-06 (magic-bias paths). Split onto
-    its own branch, cherry-picked off rocm-wfp8a16-gfx90a-v0.27.2rc0 where
+    its own branch, cherry-picked off rocm-wfp8a16-gfx90a-v0.28.0rc2 where
     it was first committed, per this repo's one-branch-per-patch rule --
     resolves the coupling docs/FP8-GFX90A.md's Tile ladder section used to
     flag as unresolved."
@@ -220,7 +220,7 @@
   verify: "pytest tests/kernels/quantization/test_triton_w4a16.py"
 
 - name: nvfp4-w4a16-gfx90a
-  branch: rocm-nvfp4-a16-gfx90a-v0.27.2rc0
+  branch: rocm-nvfp4-a16-gfx90a-v0.28.0rc2
   upstream: []
   # NOT in VLLM_REF, in content as well as in commits: 4 commits ahead of
   # v0.27.2rc0+mi210.5 (d34d58f726..a23149ed0f), and
@@ -287,9 +287,8 @@
 # ---------------------------------------------------------------------------
 
 - name: rocm-free-pa-block-size
-  branch: pa-free-blocksize-fix
+  branch: pa-free-blocksize-fix-v0.28.0rc2
   upstream: []
-  status: post-tag
   carries: "local; fixes two KV slot-addressing bugs in
     paged_attention_ll4mi_QKV_mfma16_free_kernel that made every block_size > 64
     numerically wrong on gfx90a. Both took the slot from the PARTITION-LOCAL
@@ -319,9 +318,8 @@
   verify: "pytest tests/kernels/attention/test_rocm_free_paged_attention_block_sizes.py"
 
 - name: triton-pa-seq-partition
-  branch: triton-pa-seq-partition
+  branch: triton-pa-seq-partition-v0.28.0rc2
   upstream: []
-  status: post-tag
   carries: "local; flash-decoding sequence partitioning for the Triton
     paged-decode fallback (kernel_paged_attention_2d), which launched
     (num_seqs, num_kv_heads) -- single digits of programs on a 104-CU die, each
@@ -342,9 +340,8 @@
   verify: "pytest tests/kernels/attention/test_triton_paged_decode_seq_partition.py"
 
 - name: triton-verify-ctx-partition
-  branch: triton-verify-ctx-partition
+  branch: triton-verify-ctx-partition-v0.28.0rc2
   upstream: []
-  status: post-tag
   carries: "local; the same partitioning for context_attention_fwd's
     cached-context scan, which is the kernel a SPECULATIVE-DECODE deployment
     actually runs: query_len = num_spec + 1 > 1 routes every decode step here and

@@ -14,8 +14,16 @@ BASE_IMAGE_TAG_FYI=rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0
 # on the command line, do not edit these four lines.
 VLLM_FORK=https://github.com/davetha/vllm
 VLLM_REF=v0.27.2rc0+mi210.5   # PEP 440 local version; see build note below
+# NOTE 2026-08-22: VLLM_UPSTREAM_BASE has moved to v0.28.0rc2 and every patch in
+# patches/registry.yaml now points at its rebased -v0.28.0rc2 branch, verified
+# rebasing cleanly. VLLM_REF deliberately still pins mi210.5, because the
+# v0.28.0rc2+mi210.6 tag DOES NOT EXIST YET -- the branches have not been merged
+# to the fork's main, no image has been built, and nothing has been gate-tested
+# on the cards. Moving VLLM_REF before that point would pin the build to a
+# nonexistent ref. Bump it only after: merge branches -> build -> build/verify.sh
+# tier 2 on real hardware -> cut the tag.
 VLLM_IS_FORK=1
-VLLM_UPSTREAM_BASE=v0.27.2rc0
+VLLM_UPSTREAM_BASE=v0.28.0rc2
 # The '+' is required, not cosmetic. vLLM builds its version with
 # setuptools_scm, which parses the git tag; a tag like v0.26.1rc0-mi210.1 is
 # not valid PEP 440 and fails metadata generation with
