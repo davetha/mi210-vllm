@@ -259,3 +259,97 @@
   # not re-verified by this test file. Still no in-tree test that launches
   # an actual GEMM/compute kernel on this card; that remains the next step.
   verify: "pytest tests/kernels/quantization/test_nvfp4_w4a16_gfx90a.py   # class-path only; no GPU-launch test yet"
+
+# ---------------------------------------------------------------------------
+# 2026-08-22 attention wave. THESE THREE ARE BASED ON dflash2-int, NOT ON THE
+# VERSIONS PIN. Read that before assuming they ship.
+#
+# VERSIONS pins VLLM_REF=v0.27.2rc0+mi210.5, but the image production actually
+# runs (ghcr.io/davetha/vllm-mi210:20260821-aiter) was built from the fork branch
+# `dflash2-int`, which is 737 commits ahead of the fork's main and does NOT have
+# main as an ancestor. dflash2-int itself has no entry in this file. So there are
+# two separate gaps, and this block closes neither of them -- it only avoids
+# adding a third:
+#
+#   1. dflash2-int is unregistered and unpinned, yet is what production runs.
+#   2. These three branch off dflash2-int, so they cannot be merged to the
+#      fork's main without dragging that entire wave with them.
+#
+# Until dflash2-int is itself landed and pinned, treat these as `status:
+# post-tag` in the same sense as nvfp4-w4a16-gfx90a: indexed so they are not
+# lost between pins, not a claim that any tagged image contains them.
+#
+# What production DOES contain today is these two Python files bind-mounted over
+# the image's modules by /home/dave/launch-qwen38.sh -- see the docs entry. That
+# is deliberate (it needs no rebuild) and load-bearing (dropping a mount silently
+# costs ~3x long-context decode), but it is not the same thing as shipping in the
+# image, and this file should not be read as saying it is.
+# ---------------------------------------------------------------------------
+
+- name: rocm-free-pa-block-size
+  branch: pa-free-blocksize-fix
+  upstream: []
+  status: post-tag
+  carries: "local; fixes two KV slot-addressing bugs in
+    paged_attention_ll4mi_QKV_mfma16_free_kernel that made every block_size > 64
+    numerically wrong on gfx90a. Both took the slot from the PARTITION-LOCAL
+    token index instead of the global one: the K offset
+    (klocal_token_idx % block_size, correct only when block_size divides
+    T_PAR_SIZE = 256) and a V base pointer folding in
+    (rowid * VTOKENS_PER_LANE) % block_size hoisted out of the vtoken_depth loop
+    (correct only when block_size divides both 64 and 256). That is exactly the
+    observed set: 16/32/64 agreed with the reference, 128 and 256 failed on V
+    alone, 512/784/1024 failed on both, all by order 1. Also adds
+    VLLM_ROCM_FREE_PA_LARGE_BLOCK=1 to opt in to block_size > 64 on gfx90a;
+    the gate stays conservative by default because a correct kernel is
+    necessary but not sufficient to widen it."
+  # Obsolete exactly when BOTH buggy expressions are gone from upstream's kernel.
+  # Deliberately not a grep for the gate in rocm.py: upstream could remove the
+  # block_size restriction without fixing the kernel, and dropping this patch on
+  # that basis would reintroduce silent order-1 errors.
+  # Single-quoted: the grep pattern contains a backslash-escaped asterisk, and
+  # YAML double quotes would treat \* as an escape sequence.
+  obsolete_when: '! grep -q "kphysical_block_offset = klocal_token_idx % block_size" csrc/rocm/attention.cu && ! grep -q "((rowid \* VTOKENS_PER_LANE) % block_size)" csrc/rocm/attention.cu'
+  verify: "pytest tests/kernels/attention/test_rocm_free_paged_attention_block_sizes.py"
+
+- name: triton-pa-seq-partition
+  branch: triton-pa-seq-partition
+  upstream: []
+  status: post-tag
+  carries: "local; flash-decoding sequence partitioning for the Triton
+    paged-decode fallback (kernel_paged_attention_2d), which launched
+    (num_seqs, num_kv_heads) -- single digits of programs on a 104-CU die, each
+    walking the whole sequence. Adds a partitioned kernel accumulating
+    unnormalised softmax numerators plus running max/denominator, and a reducer.
+    Worth 5.2x at 41K and 11.6x at 100K end-to-end WITH SPECULATIVE DECODING
+    OFF; with it on this path is never reached (see triton-verify-ctx-partition)
+    and the measured effect is zero."
+  # NOT a grep for PARTITION_SIZE: that file already contains
+  # _PARTITION_SIZE_ROCM (the HIP path's own constant), so the obvious
+  # predicate false-positives on an unpatched tree and would drop this branch
+  # on the very next upgrade. Checked, not assumed. Match the upstream FALLBACK
+  # SHAPE instead -- the two-tuple decode grid -- so this goes obsolete exactly
+  # when upstream gives that kernel a partition dimension of its own. The shape
+  # is still present on our own branch (we add a route before the fallback
+  # rather than replacing it), which is what makes the predicate upstream-only.
+  obsolete_when: "! grep -Pzoq '(?s)kernel_paged_attention_2d\\[\\s*\\(\\s*num_seqs,\\s*num_kv_heads,\\s*\\)\\s*\\]' vllm/v1/attention/ops/chunked_prefill_paged_decode.py"
+  verify: "pytest tests/kernels/attention/test_triton_paged_decode_seq_partition.py"
+
+- name: triton-verify-ctx-partition
+  branch: triton-verify-ctx-partition
+  upstream: []
+  status: post-tag
+  carries: "local; the same partitioning for context_attention_fwd's
+    cached-context scan, which is the kernel a SPECULATIVE-DECODE deployment
+    actually runs: query_len = num_spec + 1 > 1 routes every decode step here and
+    the paged-decode kernels are skipped entirely. _fwd_kernel's grid
+    (batch, head, cdiv(max_input_len, BLOCK_M)) collapses to one program per head
+    for a 9-token verify. Specialised route only, gated on
+    query_len <= VERIFY_MAX_Q; _fwd_kernel is untouched so ordinary prefill is
+    unaffected. This is the one that moved production: 168/30.6/13.6 ->
+    178.8/92.0/49.0 tok/s at 2K/41K/101K."
+  # Same reasoning as the entry above: match the upstream grid that collapses
+  # to one program per head for a short query, so this goes obsolete exactly
+  # when upstream stops sizing the third grid dim from max_input_len alone.
+  obsolete_when: "! grep -Fq 'triton.cdiv(max_input_len, META[\"BLOCK_M\"])' vllm/v1/attention/ops/prefix_prefill.py"
+  verify: "pytest tests/kernels/attention/test_triton_verify_ctx_partition.py"
