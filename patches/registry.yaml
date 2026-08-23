@@ -1,5 +1,3 @@
-# UPGRADE IN PROGRESS (2026-08-22): EVERY entry below is `status: post-tag`.
-#
 # All fourteen patches have been rebased onto v0.28.0rc2 and repointed at their
 # -v0.28.0rc2 branches, but VLLM_REF still pins v0.27.2rc0+mi210.5 because the
 # v0.28.0rc2+mi210.6 tag does not exist yet. So no branch listed here is
@@ -63,7 +61,6 @@
 
 - name: rocm-paged-attention
   branch: rocm-paged-attention-256k-v0.28.0rc2
-  status: post-tag
   upstream: [39001]
   carries: "Eugene Kuznetsov's multi-pass reduction + 3 local gfx90a commits"
   obsolete_when: "grep -q 'npar_loops > 16' csrc/rocm/attention.cu"
@@ -72,7 +69,6 @@
 
 - name: wvsplitk-oob
   branch: rocm-wvsplitk-oob-strided-v0.28.0rc2
-  status: post-tag
   upstream: [50618]
   carries: "John Qin / Yanyuan Qin; reproduced on gfx90a before merging.
     Rebasing onto v0.27.2rc0 collapsed 4 commits into 1: upstream took the
@@ -86,7 +82,6 @@
 
 - name: int4-interleave-gfx9
   branch: rocm-int4-interleave-gfx9-v0.28.0rc2
-  status: post-tag
   upstream: [43389]
   carries: "amd-xavierwang's int4 repack, gate widened from on_gfx1x to include GFX9"
   # If upstream widens it themselves, ours is redundant.
@@ -95,7 +90,6 @@
 
 - name: sharded-state-tp
   branch: fix/sharded-state-tp-mismatch-v0.28.0rc2
-  status: post-tag
   upstream: []
   carries: "local; reject checkpoints saved at a different TP size"
   obsolete_when: "grep -q '_saved_tp_size' vllm/model_executor/model_loader/sharded_state_loader.py"
@@ -103,7 +97,6 @@
 
 - name: benchmark-moe-int8
   branch: fix-benchmark-moe-int8-w8a16-v0.28.0rc2
-  status: post-tag
   upstream: [31011]   # stale, auto-closed 2026-04-30
   carries: "local, grouping taken from #31011"
   obsolete_when: "! grep -q 'quant_dtype = torch.int8' benchmarks/kernels/benchmark_moe.py"
@@ -111,7 +104,6 @@
 
 - name: w4a16-tiles-gfx90a
   branch: rocm-w4a16-tiles-gfx90a-v0.28.0rc2
-  status: post-tag
   upstream: []
   carries: "local; gfx90a tile table for the dense W4A16 Triton GEMM"
   # Upstream added a gfx90a branch of its own to this selection. Until then,
@@ -123,7 +115,6 @@
 
 - name: w4a16-bittrick-gfx90a
   branch: rocm-w4a16-bittrick-gfx90a-v0.28.0rc2
-  status: post-tag
   upstream: []
   carries: "local; magic-bias dequant + scale hoist for the dense W4A16 GEMM"
   # Obsolete when upstream stops doing per-weight bf16 arithmetic in this loop.
@@ -133,7 +124,6 @@
 
 - name: w4a16-blockm-gate-gfx90a
   branch: rocm-w4a16-blockm-gate-v0.28.0rc2
-  status: post-tag
   upstream: []
   carries: "local; re-keys the magic-bias gate above on BLOCK_M instead of M
     (commit 99e8661129), and widens it from M<=8 to BLOCK_M<=16. Not
@@ -181,7 +171,6 @@
 
 - name: w8a16-fp8-gfx90a
   branch: rocm-wfp8a16-gfx90a-v0.28.0rc2
-  status: post-tag
   upstream: []
   carries: "local; fused Triton W8A16 fp8 GEMM for gfx90a (dequant e4m3fn
     weights in the GEMM inner loop, bf16-native decode by default with a
@@ -220,7 +209,6 @@
 
 - name: w4a16-narrow-m16-gfx90a
   branch: rocm-w4a16-gfx90a-v0.28.0rc2
-  status: post-tag
   upstream: []
   carries: "local; extends the dense W4A16 Triton GEMM's gfx90a narrow rung
     from M<=8 to M<=16 (commit 3e17cd4213), recovering 1.37-1.45x GB/s on
@@ -250,7 +238,6 @@
   # that tag -- checked against the tag's own tree, not inferred from the branch.
   # No image built from the current pin contains this. Indexed ahead of the pin
   # that will carry it -- clear this line when VLLM_REF moves past a23149ed0f.
-  status: post-tag
   carries: "local; Triton NVFP4 W4A16 GEMM for gfx90a (packed e2m1 weight
     decode via the same bias-shift bit trick as the FP8 kernel, per-16-group
     e4m3 block scale + scalar global scale, ported from the measured
@@ -310,7 +297,6 @@
 
 - name: rocm-free-pa-block-size
   branch: pa-free-blocksize-fix-v0.28.0rc2
-  status: post-tag
   upstream: []
   carries: "local; fixes two KV slot-addressing bugs in
     paged_attention_ll4mi_QKV_mfma16_free_kernel that made every block_size > 64
@@ -342,7 +328,6 @@
 
 - name: triton-pa-seq-partition
   branch: triton-pa-seq-partition-v0.28.0rc2
-  status: post-tag
   upstream: []
   carries: "local; flash-decoding sequence partitioning for the Triton
     paged-decode fallback (kernel_paged_attention_2d), which launched
@@ -365,7 +350,6 @@
 
 - name: triton-verify-ctx-partition
   branch: triton-verify-ctx-partition-v0.28.0rc2
-  status: post-tag
   upstream: []
   carries: "local; the same partitioning for context_attention_fwd's
     cached-context scan, which is the kernel a SPECULATIVE-DECODE deployment
