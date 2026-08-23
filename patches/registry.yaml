@@ -1,3 +1,23 @@
+# RETIRED 2026-08-22: dflash2-int.
+#
+# The fork's DFlash2 port (vLLM PR #52816 cherry-picked onto v0.27.2rc0+mi210.5)
+# is gone. Upstream v0.28.0rc2 ships DFlash2 itself -- qwen3_dflash2.py and
+# tests/v1/spec_decode/test_dflash2.py are both present at that tag -- so
+# carrying the port had no purpose once VLLM_UPSTREAM_BASE moved.
+#
+# It was TAGGED before deletion, as archive/dflash2-int-20260821. No other tag
+# contained its tip, and images :20260821 and :20260821-aiter were built from
+# it; :20260821-aiter is the rollback target named in launch-qwen38.sh.mi210.5
+# on the box, so deleting the branch outright would have made the production
+# rollback path unreproducible. Build it again with
+# VLLM_REF=archive/dflash2-int-20260821 if that is ever needed.
+#
+# Three branches still carry its commits and are no longer referenced here,
+# having been superseded by their -v0.28.0rc2 rebases: pa-free-blocksize-fix,
+# triton-pa-seq-partition, triton-verify-ctx-partition. They are left in place
+# deliberately -- they are the exact source of the two open upstream PRs'
+# sibling work and cost nothing to keep.
+#
 # All fourteen patches have been rebased onto v0.28.0rc2 and repointed at their
 # -v0.28.0rc2 branches, but VLLM_REF still pins v0.27.2rc0+mi210.5 because the
 # v0.28.0rc2+mi210.6 tag does not exist yet. So no branch listed here is
