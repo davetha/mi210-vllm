@@ -82,19 +82,14 @@ AITER_CDNA2_REF=v1.4   # tagged 2026-08-22; adds supersede-detection for the sca
 # with `probe/probe_image_patches.sh`: v1.0 images report ck_gate=no.
 
 # Filled in by build/build.sh after a verified build. compose.yaml uses this.
-# LOCAL digest, not a registry one. build/build.sh records a registry digest
-# only when the image resolves in its registry; mi210.6-aiter has never been
-# pushed, because no ghcr credential exists on this box. This pins the exact
-# image `docker compose up` will run HERE, which is strictly better than the
-# empty value compose.yaml has always failed on -- but it is NOT pullable from
-# another machine, so it does not make the build portable.
+# Registry digest, confirmed resolvable via `docker buildx imagetools inspect`
+# rather than inferred from a successful push. Pinned by digest, not tag, for
+# the same reason BASE_IMAGE is: a tag can be re-pushed, a digest cannot.
 #
-# To finish the job: `docker login ghcr.io` with a PAT carrying write:packages,
-# then
-#   docker tag local/vllm-mi210:mi210.6-aiter ghcr.io/davetha/vllm-mi210:mi210.6-aiter
-#   docker push ghcr.io/davetha/vllm-mi210:mi210.6-aiter
-#   ./build/build.sh ghcr.io/davetha/vllm-mi210:mi210.6-aiter   # re-records the digest
-DERIVED_IMAGE=local/vllm-mi210@sha256:e2bbfc1ed711065b50703b8540d60a268dba69fdae8647b081de11ed9f1802f7
+# Tagged by VERSION (mi210.6) rather than by date as earlier images were --
+# a date says when it was built, not what is in it, and this one corresponds
+# exactly to VLLM_REF=v0.28.0rc2+mi210.6.
+DERIVED_IMAGE=ghcr.io/davetha/vllm-mi210@sha256:e2bbfc1ed711065b50703b8540d60a268dba69fdae8647b081de11ed9f1802f7
 
 # AITER's JIT resolves against this exact Triton; a mismatch silently disables
 # the ASM paths rather than erroring.
