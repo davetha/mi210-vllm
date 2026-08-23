@@ -12,21 +12,22 @@
 # rollback path unreproducible. Build it again with
 # VLLM_REF=archive/dflash2-int-20260821 if that is ever needed.
 #
-# Three branches still carry its commits and are no longer referenced here,
-# having been superseded by their -v0.28.0rc2 rebases: pa-free-blocksize-fix,
-# triton-pa-seq-partition, triton-verify-ctx-partition.
+# Those three branches are now RETIRED too (2026-08-22): pa-free-blocksize-fix,
+# triton-pa-seq-partition, triton-verify-ctx-partition. Each is tagged
+# archive/<branch>-20260821 before deletion, and each is superseded by its
+# -v0.28.0rc2 rebase, which is what this file references and what
+# v0.28.0rc2+mi210.6 contains. Two were byte-identical to their rebases; the
+# third differed only where the rebase picked up an upstream change to the
+# final-tile NaN masking.
 #
-# CORRECTION to the first version of this note, which said they were "the exact
-# source of the two open upstream PRs' sibling work". They are not. The upstream
-# PRs (#53383, #53384) are on upstream-verify-ctx-partition and
-# upstream-pa-seq-partition, both branched from upstream/main @ 10704541aa and
-# independent of these. Deleting these cannot affect those PRs.
+# They did NOT back the open upstream PRs -- #53383 and #53384 sit on
+# upstream-verify-ctx-partition and upstream-pa-seq-partition, branched from
+# upstream/main and independent of all of this.
 #
-# What they do uniquely carry is the exact file content that was bind-mounted
-# into the mi210.5-era production container (/home/dave/patches/*.seqpart.py, see
-# launch-qwen38.sh.mi210.5). Two of the three are byte-identical to their
-# rebases; triton-pa-seq-partition differs only because the rebase picked up an
-# upstream change to the NaN-masking of the final tile.
+# The archive tags exist because these branches hold the exact file content that
+# was bind-mounted into the mi210.5-era production container
+# (/home/dave/patches/*.seqpart.py, per launch-qwen38.sh.mi210.5). Nothing was
+# built from the branches themselves; that image is archive/dflash2-int-20260821.
 #
 # All fourteen patches have been rebased onto v0.28.0rc2 and repointed at their
 # -v0.28.0rc2 branches, but VLLM_REF still pins v0.27.2rc0+mi210.5 because the
