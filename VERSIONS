@@ -5,17 +5,17 @@
 # reported vllm 0.26.1rc1.dev0+g53f6dd5c6 while its own
 # fused_moe/utils.py did not match that commit, which cost two debugging
 # cycles. The image is authoritative; upstream SHAs are documentation.
-BASE_IMAGE=rocm/vllm@sha256:ac1be45dac88db3fd32c1aa45ecd043c0efad7a809c1bcb36960e369d9dbb8a6
-BASE_IMAGE_TAG_FYI=rocm7.14.0_cdna_ubuntu24.04_py3.14_pytorch_2.11.0_vllm_0.23.0
+BASE_IMAGE=rocm/vllm@sha256:b8a082f346d069376d35784250e38b23a043efe979408ae3a33d7c6b62ee3276
+BASE_IMAGE_TAG_FYI=rocm10.0.0_ubuntu24.04_py3.14_pytorch_2.12.0_vllm_0.27.0
 
 # vLLM source. The default is the fork, because it carries the four gfx90a
 # patches that are the reason this project exists and that verify.sh gates on.
 # To build against upstream instead, see BUILDING FROM UPSTREAM below: override
 # on the command line, do not edit these four lines.
 VLLM_FORK=https://github.com/davetha/vllm
-VLLM_REF=v0.28.0rc2+mi210.6   # PEP 440 local version; see build note below
+VLLM_REF=v0.28.1rc0+mi210.7   # 14-patch gfx90a stack rebased onto upstream main 6fbb00b188 (2026-09-07)
 VLLM_IS_FORK=1
-VLLM_UPSTREAM_BASE=v0.28.0rc2
+VLLM_UPSTREAM_BASE=6fbb00b18874e27ba7d7adc0a3b8e93fee763ab1   # upstream main, nearest tag v0.28.1rc0
 # The '+' is required, not cosmetic. vLLM builds its version with
 # setuptools_scm, which parses the git tag; a tag like v0.26.1rc0-mi210.1 is
 # not valid PEP 440 and fails metadata generation with
@@ -56,7 +56,7 @@ VLLM_UPSTREAM_BASE=v0.28.0rc2
 # open AITER's dispatch. Both live in aiter-cdna2. Pointing at upstream is the
 # honest description of what is built.
 AITER_REPO=https://github.com/ROCm/aiter
-AITER_REF=v0.1.19
+AITER_REF=v0.1.21
 
 # The gfx942 -> gfx90a ASM repatcher. Not a source patch: it transforms the
 # code objects AITER ships, because AITER ships none for gfx90a.
