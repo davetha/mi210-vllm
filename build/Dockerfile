@@ -100,6 +100,12 @@ RUN set -eu; mkdir -p /src/shipfiles; miss=0; \
 # the final image except the wheel.
 FROM base AS csrc-build
 COPY --from=fetch /src/vllm /src/vllm
+# GitHub throughput from big was 20-50 KB/s on 2026-09-07; the ~700 MB ROCm/triton clone that
+# cmake/external_projects/triton_kernels.cmake does for the pure-Python triton_kernels package stalled the
+# build for 30 min. The base image ships the same package (vllm/third_party/triton_kernels); point the
+# FetchContent override at it. Recorded in VERSIONS as TRITON_KERNELS_SRC (base-image copy, not the pinned SHA).
+ARG TRITON_KERNELS_SRC_DIR=/opt/python/lib/python3.14/site-packages/vllm/third_party/triton_kernels
+ENV TRITON_KERNELS_SRC_DIR=${TRITON_KERNELS_SRC_DIR}
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=cache,target=/root/.cache/ccache \
     cd /src/vllm && python3 -m pip wheel --no-deps --no-build-isolation -w /out .
