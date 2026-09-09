@@ -61,8 +61,25 @@ AITER_REF=v0.1.21
 # The gfx942 -> gfx90a ASM repatcher. Not a source patch: it transforms the
 # code objects AITER ships, because AITER ships none for gfx90a.
 AITER_CDNA2=https://github.com/davetha/aiter-cdna2
-AITER_CDNA2_REF=v1.4   # tagged 2026-08-22; adds supersede-detection for the scaled_mm site,
-                       # which the vLLM fork now fixes itself (and more broadly)
+AITER_CDNA2_REF=v1.6   # tagged 2026-09-09. Two fixes, both required by this base:
+                       # v1.5 -- supersede-detection also accepts upstream's own
+                       #   _rocm_torch_fp8_scaled_mm_supported allow-list, not just the
+                       #   fork's spelling of the same fix.
+                       # v1.6 -- the CK int8 GEMM patch's gen_instances.py anchor is
+                       #   re-derived: AITER v0.1.21 dropped a trailing '# noqa: E402'
+                       #   the old anchor ran through. One anchor now covers v0.1.20
+                       #   and v0.1.21.
+#
+# v1.5 is REQUIRED for a ROCm-10 base and is not cosmetic. Against vllm 0.28.1rc0
+# on upstream main, the v1.4 marker no longer matches: the scaled_mm site is
+# already fixed, but upstream fixed it its own way, so v1.4 reports
+#   patched  pytorch.py  (want 1, found 0 unpatched / 0 patched)
+#   1 site(s) did not match as expected.
+# enable_vllm_aiter_gfx90a.py exits non-zero, add-aiter.sh aborts, and the image
+# is committed with NO AITER. Measured cost of that on Qwen3.8-27B-W8A8, one
+# MI210: vLLM selects TritonInt8ScaledMMLinearKernel instead of
+# AiterInt8ScaledMMLinearKernel and decode runs at 16.5 tok/s against 48.0.
+# v1.4 was the last ref that matched the 0.28.0rc2 fork spelling alone.
 # v1.1 -> v1.3 carries the vLLM 0.27 spellings. 0.27 rewrote BOTH gate sites --
 # supports_compute_capability became get_cdna_version() > 2, and register_ops_once
 # dropped its decorator for an inlined guard -- so v1.1 aborts add-aiter.sh
@@ -93,7 +110,19 @@ DERIVED_IMAGE=ghcr.io/davetha/vllm-mi210@sha256:e2bbfc1ed711065b50703b8540d60a26
 
 # AITER's JIT resolves against this exact Triton; a mismatch silently disables
 # the ASM paths rather than erroring.
-TRITON_PIN=3.7.1
+#
+# 3.8.0 is what the ROCm 10 base ships, and on that base it is not a free choice.
+# torch 2.12.0+rocm10.0.0 requires triton==3.8.0+git4cff872c.rocm10.0.0, and
+# forcing the old 3.7.1 pin on top of it makes `import aiter` SEGFAULT (exit 139,
+# measured 2026-09-09) -- which aborts add-aiter.sh and leaves an image with no
+# AITER at all, the ~2.4x decode loss described above. 3.7.1 was correct for the
+# ROCm 9 base and is kept here only as that note.
+#
+# add-aiter.sh installs this only when the running image does not already have
+# it. That matters: the base's 3.8.0 is a ROCm build (+git4cff872c.rocm10.0.0)
+# and a plain `pip install triton==3.8.0` would replace it with the upstream
+# wheel of the same version number.
+TRITON_PIN=3.8.0
 
 # llm-compressor, for build/add-convert.sh only -- never in the serving image.
 # 0.12.0.1 (the current release) pins transformers<=5.10.1, which conflicts with

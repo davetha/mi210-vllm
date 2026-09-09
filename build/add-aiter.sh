@@ -14,6 +14,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 set -a; . ./VERSIONS; set +a
+# The gfx90a cards specifically -- not whatever /dev/dri happens to hold. aiter's
+# JIT resolves the CU count for the CURRENT arch during codegen, and vLLM reads
+# its architecture from amdsmi's physical device 0, so on a mixed host a build
+# that sees another card first targets the wrong GPU. See gpu-nodes.sh.
+. ./gpu-nodes.sh
+mapfile -t GPU_DEVICES < <(gpu_devices)
 
 IN="${1:?usage: add-aiter.sh <input-image> [output-image]}"
 OUT="${2:-${IN}-aiter}"
@@ -26,7 +32,7 @@ trap cleanup EXIT
 echo "=== aiter  : $AITER_REPO @ $AITER_REF"
 echo "=== repatch: $AITER_CDNA2 @ $AITER_CDNA2_REF"
 
-docker run -d --name "$C" --device /dev/kfd --device /dev/dri --group-add video \
+docker run -d --name "$C" --device /dev/kfd "${GPU_DEVICES[@]}" --group-add video \
   --security-opt seccomp=unconfined --ipc=host --shm-size 16G \
   -v /var/cache/mi210-ccache:/ccache -e CCACHE_DIR=/ccache \
   --entrypoint sleep "$IN" infinity >/dev/null
@@ -38,7 +44,11 @@ docker exec "$C" bash -lc "
   git clone --recursive --depth 1 --branch '$AITER_REF' '$AITER_REPO' /src/aiter
   python3 -m pip uninstall -y amd-aiter aiter 2>/dev/null || true
   cd /src/aiter && python3 -m pip install --no-build-isolation . 2>&1 | tail -5
-  python3 -m pip install --quiet 'triton==$TRITON_PIN'
+  # Only if it is not already right. The base image's Triton is a ROCm build
+  # (3.8.0+git4cff872c.rocm10.0.0) that torch pins exactly; reinstalling by bare
+  # version number would swap it for the upstream wheel.
+  have=\$(python3 -c 'import triton;print(triton.__version__)' 2>/dev/null || echo none)
+  [ \"\$have\" = '$TRITON_PIN' ] || python3 -m pip install --quiet 'triton==$TRITON_PIN'
   python3 -c \"import triton; assert triton.__version__ == '$TRITON_PIN', triton.__version__\"
   python3 -c 'import aiter; print(\"aiter imports OK\")'
 "
@@ -87,5 +97,5 @@ GOT=$(docker inspect "$OUT" --format '{{json .Config.Entrypoint}}')
 [ "$GOT" = "$ENTRY" ] || { echo "entrypoint not preserved: want $ENTRY, got $GOT" >&2; exit 1; }
 echo "=== built $OUT"
 echo "=== verifying on the cards ==="
-docker run --rm --device=/dev/kfd --device=/dev/dri --group-add video --ipc=host \
+docker run --rm --device=/dev/kfd "${GPU_DEVICES[@]}" --group-add video --ipc=host \
   --entrypoint verify-image "$OUT" --max-tier 2
