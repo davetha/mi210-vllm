@@ -396,3 +396,48 @@
   # when upstream stops sizing the third grid dim from max_input_len alone.
   obsolete_when: "! grep -Fq 'triton.cdiv(max_input_len, META[\"BLOCK_M\"])' vllm/v1/attention/ops/prefix_prefill.py"
   verify: "pytest tests/kernels/attention/test_triton_verify_ctx_partition.py"
+
+- name: fused-gdn-decode-cdna
+  branch: mi210/fused-gdn-decode-cdna
+  upstream: []
+  # NOT in VLLM_REF. Merged to mi210/main-all as 12dadcb413, AFTER the
+  # v0.28.1rc0+mi210.7 tag was cut at fcba99756f, so no image built from the
+  # current pin contains it. Clear this marker when VLLM_REF moves past
+  # 12dadcb413. Same post-tag situation as nvfp4-w4a16-gfx90a above.
+  status: post-tag
+  carries: "local; builds vLLM's fused GDN decode kernel
+    (torch.ops._C.fused_gdn_decode_post_conv_mtp) for CDNA rather than leaving
+    every gated-delta-net layer on the unfused Triton path -- upstream compiles
+    that kernel for CUDA only, so on ROCm it logs 'is not built' and falls back.
+    The kernel is plain SIMT, no MFMA, so this is a USE_ROCM compat layer inside
+    the one existing source and the CUDA path is untouched: cp.async becomes a
+    synchronous 16-byte copy (the chunk loop's __syncthreads() already orders the
+    previous chunk's reads before this chunk's writes, and the stages are separate
+    buffers); every shuffle is pinned to width 32 because the kernel decomposes
+    256 threads into LOGICAL 32-lane warps and a bare hipify would fold two of
+    them into one wave64 reduction; __nv_bfloat16 spellings plus a
+    __floats2bfloat162_rn shim ROCm lacks; and __launch_bounds__ drops its second
+    argument, which means min blocks/SM on CUDA but min waves/EU on HIP.
+    Built for gfx90a|gfx942|gfx950 only -- the logical-32-lane decomposition is
+    validated on wave64, not on RDNA's wave32.
+    Worth 1.4% of decode (104.10 -> 102.62 ms/step on Qwen3.8-27B-W8A8, one
+    MI210, MTP N=1, op invoked 576x by counter). Small on purpose: device-time
+    profiling puts weight GEMMs at ~66% of decode and GDN at ~1.4%, so this
+    closes a gap rather than moving the needle.
+    NOTE it is only reachable when GDN_AITER_TRITON_AVAILABLE is false --
+    forward_hip's AITER branch returns before forward_cuda."
+  # Upstream did exactly this for the sibling KDA kernel by adding a separate
+  # _rocm.cu and a HIP arch filter in CMakeLists. If they do the same here, ours
+  # is redundant.
+  obsolete_when: "test -f csrc/libtorch_stable/gdn/fused_gdn_decode_kernel_rocm.cu"
+  # NO in-tree test yet, and this line should not pretend otherwise. Correctness
+  # was gated out of tree by a standalone HIP harness that compiles the shipped
+  # kernel text against a float64 host reference: 100% bit-exact at the default
+  # shape and >=99.97% across fp32/bf16 state, silu/sigmoid gating, HV/H in
+  # {1,2,3,4,8}, aliased source/destination slots and the invalid-slot zero-fill.
+  # Its discriminating power was established by building the wave64-shuffle
+  # variant as a negative control, which fails at 25% of outputs wrong and state
+  # relative error 9.08. Porting that harness to tests/kernels/mamba/ is the next
+  # step; until then there is nothing for pytest to run.
+  verify: ""   # none in-tree yet -- see the note above
+
