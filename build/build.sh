@@ -10,6 +10,12 @@ cd "$(dirname "$0")/.."
 # file would clobber those, so capture them first and put them back after.
 _ovr_fork="${VLLM_FORK:-}"; _ovr_ref="${VLLM_REF:-}"; _ovr_isfork="${VLLM_IS_FORK:-}"
 set -a; . ./VERSIONS; set +a
+# verify.sh's own gates read the architecture vLLM detects, and on a host with
+# cards of more than one architecture that comes from amdsmi's PHYSICAL device 0.
+# Handing these containers all of /dev/dri would make the build's own
+# verification look at the wrong card. See gpu-nodes.sh.
+. ./gpu-nodes.sh
+mapfile -t GPU_DEVICES < <(gpu_devices)
 if [ -n "$_ovr_fork" ];   then VLLM_FORK="$_ovr_fork";     echo "note: VLLM_FORK overridden from the environment"; fi
 if [ -n "$_ovr_ref" ];    then VLLM_REF="$_ovr_ref";       echo "note: VLLM_REF overridden from the environment"; fi
 if [ -n "$_ovr_isfork" ]; then VLLM_IS_FORK="$_ovr_isfork"; echo "note: VLLM_IS_FORK overridden from the environment"; fi
@@ -73,11 +79,11 @@ echo
 if [ "$NO_GPU" -eq 1 ]; then
   echo "=== tier 2: SKIPPED (--no-gpu) ==="
   echo "  This image is NOT hardware-qualified. Run it on the cards before deploying:"
-  echo "    docker run --rm --device=/dev/kfd --device=/dev/dri --group-add video \\"
+  echo "    docker run --rm --device=/dev/kfd ${GPU_DEVICES[*]} --group-add video \\"
   echo "      --entrypoint verify-image $IMAGE --max-tier 2"
 else
   echo "=== tier 2: numeric acceptance on real hardware ==="
-  docker run --rm --device=/dev/kfd --device=/dev/dri --group-add video --ipc=host \
+  docker run --rm --device=/dev/kfd "${GPU_DEVICES[@]}" --group-add video --ipc=host \
     -v /tmp/qualification:/out -e RECORD=/out/qualification.json \
     --entrypoint verify-image "$IMAGE" --max-tier 2
   echo "qualification record: /tmp/qualification/qualification.json"
@@ -95,7 +101,7 @@ elif [ -n "${SMOKE_MODEL:-}" ]; then
   echo "=== tier 3: serve smoke test ($SMOKE_MODEL) ==="
   C=smoke-$$
   docker rm -f "$C" >/dev/null 2>&1 || true
-  docker run -d --name "$C" --device /dev/kfd --device /dev/dri --group-add video \
+  docker run -d --name "$C" --device /dev/kfd "${GPU_DEVICES[@]}" --group-add video \
     --security-opt seccomp=unconfined --ipc=host --shm-size 16G \
     -v "$(dirname "$SMOKE_MODEL")":/smoke:ro \
     -e GPU_PINNED_MIN_XFER_SIZE=67108864 -e VLLM_ROCM_USE_AITER=0 \
