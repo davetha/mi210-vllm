@@ -401,6 +401,77 @@ configs from several models: the tuned-config filename does not encode `K`, so
 two models can collide. [tuning/README.md](../tuning/README.md) has the case
 where that cost 7.5 GPU-hours.
 
+## Which GPUs the container sees
+
+If this host holds **only** gfx90a cards, skip this section — the default is
+right and nothing below changes.
+
+If it also holds a card of another architecture, read it. Getting this wrong is
+the single most expensive mistake available here: it cost **2.4x on decode**,
+silently, for weeks.
+
+vLLM resolves the GPU architecture **once, at import**, from amdsmi, asking for
+**physical device 0**:
+
+```python
+# vllm/platforms/rocm.py
+_GCN_ARCH  = _get_gcn_arch()          # amdsmi, physical device 0
+_ON_GFX9   = any(a in _GCN_ARCH for a in ["gfx90a", "gfx942", "gfx950"])
+```
+
+amdsmi enumerates real hardware. It ignores `HIP_VISIBLE_DEVICES`, and it
+ignores `ROCR_VISIBLE_DEVICES` — both were tested, neither helps. So on a host
+whose physical device 0 is, say, an R9700, vLLM decides the whole box is
+`gfx1201`, sets `_ON_GFX9` false, and every gfx9-gated path turns itself off.
+Torch still reports `gfx90a` correctly, which is why this is hard to spot.
+
+What that costs, measured on Qwen3.8-27B-W8A8, one MI210, MTP N=1:
+
+| container sees | int8 kernel vLLM selects | decode | prefill @3.5k |
+|---|---|---|---|
+| all 4 cards (2x MI210 + 2x R9700) | `TritonInt8ScaledMMLinearKernel` | 19.9 tok/s | 1,679 tok/s |
+| MI210 render nodes only | `AiterInt8ScaledMMLinearKernel` | **48.0 tok/s** | **2,067 tok/s** |
+
+Nothing errors in the slow case. It is a fallback, not a failure.
+
+**`run.sh` handles this for you.** It passes only the gfx90a render nodes when
+it finds a mixed host, prints `=== gpus : 2/4 render nodes` when it does, and
+passes `/dev/dri` whole when every card matches. Override with
+`GPU_NODES='/dev/dri/renderD128 /dev/dri/renderD131'`.
+
+**`compose.yaml` cannot** — it has no shell — so set the variable:
+
+```bash
+GPU_RENDER_NODE=/dev/dri/renderD128 docker compose up
+```
+
+Find your nodes by PCI device id; gfx90a (Aldebaran) is `0x740f`, `0x740c` or
+`0x7408`:
+
+```bash
+for n in /dev/dri/renderD*; do
+  echo "$n $(cat /sys/class/drm/${n##*/}/device/device)"
+done
+```
+
+**Confirm it worked.** The server log names the kernel it picked:
+
+```bash
+docker logs <container> 2>&1 | grep 'Selected.*ScaledMMLinearKernel'
+# want: Selected AiterInt8ScaledMMLinearKernel for CompressedTensorsW8A8Int8
+```
+
+`Selected TritonInt8ScaledMMLinearKernel` means the arch was misread, or the
+image has no AITER (see `build/add-aiter.sh`). `build/verify.sh` checks both.
+
+The two causes cost about the same and stack. On the ROCm-10 image, which
+shipped without AITER because `add-aiter.sh` was aborting, running
+`build/add-aiter.sh` against it took the same model from 16.5 to **41.6 tok/s**
+on one MI210 — with the render nodes already correct.
+
+Note this is upstream vLLM behaviour, not something this fork introduced —
+a single global arch is simply not a safe assumption on a heterogeneous host.
+
 ## Multiple GPUs
 
 `--tensor-parallel-size 2` uses both cards. It requires the model's attention
@@ -419,6 +490,8 @@ Raise it when the model does not fit in one card's 64 GiB, not by default.
 | `Free memory 0.3/63.98 GiB` at startup | Something else is holding VRAM. `docker ps` — a forgotten container is the usual answer, not a leak. |
 | `module_rmsnorm_quant ... build failed` | `VLLM_ROCM_USE_AITER=1` against an image without AITER. Run `build/add-aiter.sh`, or leave it 0. |
 | Load takes hours | `GPU_PINNED_MIN_XFER_SIZE` is not set. [LOAD-TIME.md](LOAD-TIME.md). |
+| Decode ~2.4x slower than expected, no error | On a mixed-architecture host vLLM read the arch off the wrong card and skipped every gfx9 path. Check `Selected ...ScaledMMLinearKernel` in the log. See "Which GPUs the container sees". |
+| `Selected TritonInt8ScaledMMLinearKernel` | Either the above, or the image has no AITER — run `build/add-aiter.sh`. |
 | `vllm serve --help` shows almost nothing | The default help is grouped. Use `--help=all`, or `--help=max-model-len` for one flag. |
 
 To see what the image actually carries:

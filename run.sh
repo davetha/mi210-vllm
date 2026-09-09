@@ -13,6 +13,10 @@
 #   ./run.sh run-batch -i prompts.jsonl -o out.jsonl --model ...
 #
 #   ./run.sh shell                           interactive bash in the image
+#
+#   GPU_NODES='/dev/dri/renderD128' ./run.sh ...   pin which GPUs are visible
+#     On a host with mixed GPU architectures this script already hands the
+#     container only the gfx90a cards -- see docs/RUNNING.md, it is worth 2.4x.
 #   ./run.sh exec probe-image-patches        any command at all
 #   ./run.sh exec python3 -c 'import torch; print(torch.cuda.device_count())'
 #
@@ -107,6 +111,13 @@ fi
 # they are correct for anyone running it without this script. Only forward them
 # when the caller has actually set one, which keeps the image the single place
 # a default is defined instead of two places that can disagree.
+# -------------------------------------------------------------------- GPUs ---
+# Which GPUs the container sees, chosen by device node. gpu-nodes.sh explains
+# why that is not the same question as HIP_VISIBLE_DEVICES, and why getting it
+# wrong on a mixed-architecture host costs 2.4x on decode with no error.
+. ./gpu-nodes.sh
+mapfile -t GPU_DEVICES < <(gpu_devices)
+
 ENVS=()
 for v in GPU_PINNED_MIN_XFER_SIZE VLLM_ROCM_USE_AITER HF_TOKEN MI210_QUIET; do
   [ -n "${!v:-}" ] && ENVS+=(-e "$v=${!v}")
@@ -131,7 +142,7 @@ echo "=== image  : $IMAGE"
                    || echo "=== running: ${ARGS[*]}   (container: $NAME)"
 
 exec docker run --rm "${TTY[@]}" --name "$NAME" \
-  --device /dev/kfd --device /dev/dri --group-add video \
+  --device /dev/kfd "${GPU_DEVICES[@]}" --group-add video \
   --ipc host --shm-size 16G \
   --security-opt seccomp=unconfined \
   --ulimit memlock=-1 \

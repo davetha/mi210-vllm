@@ -22,7 +22,24 @@ services:
     security_opt: [seccomp=unconfined, label=disable]
     devices:
       - /dev/kfd:/dev/kfd
-      - /dev/dri:/dev/dri
+      # GPU_RENDER_NODE defaults to all of /dev/dri, which is right on a host
+      # whose cards are all gfx90a. It is WRONG on a host that also holds a
+      # non-CDNA2 card: vLLM reads the architecture once at import from amdsmi
+      # for PHYSICAL device 0, ignoring HIP_VISIBLE_DEVICES and
+      # ROCR_VISIBLE_DEVICES alike, so it can conclude the box is gfx12, set
+      # _ON_GFX9 False, and silently skip every gfx9 path -- including the AITER
+      # int8 GEMM, which measured 48.0 -> 19.9 tok/s on Qwen3.8-27B-W8A8.
+      #
+      # On a mixed host set it to one gfx90a render node, and add a line per
+      # extra card:
+      #   GPU_RENDER_NODE=/dev/dri/renderD128 docker compose up
+      # Find them with:
+      #   for n in /dev/dri/renderD*; do
+      #     echo "$n $(cat /sys/class/drm/${n##*/}/device/device)"; done
+      # gfx90a (Aldebaran) is 0x740f / 0x740c / 0x7408. run.sh does this
+      # automatically; compose cannot, so it is a variable.
+      # See docs/RUNNING.md, "Which GPUs the container sees".
+      - ${GPU_RENDER_NODE:-/dev/dri}:${GPU_RENDER_NODE:-/dev/dri}
     environment:
       # OFF by default, and that is deliberate. The core image built by
       # build/build.sh contains no AITER: with this set to 1, vLLM asks AITER's
