@@ -29,10 +29,11 @@ at build time, and documented with the measurements that justify them.
 | W4A16 magic-bias gate on BLOCK_M | local | keys the gate on the tile rather than on M, where the cost crossover actually lives, so a future ladder change cannot silently mis-enable it |
 | fp8 W8A16 Triton kernel | local | first ROCm entry in `_POSSIBLE_WFP8A16_KERNELS` (upstream ships that list empty), plus the CDNA2 dispatcher fix that was routing fp8 checkpoints into a `torch._scaled_mm` crash |
 | NVFP4 W4A16 Triton kernel | local | packed e2m1 decode + per-16-group scales for gfx90a — **not in the pinned tag**: this one is post-`VLLM_REF`, so it is not in an image built from `VERSIONS` as it stands (see `patches/registry.yaml`) |
+| fused GDN decode on CDNA | local | builds vLLM's CUDA-only fused gated-delta-net decode kernel for gfx90a, so GDN layers stop falling back to unfused Triton — **not in the pinned tag** either (post-`VLLM_REF`, see `patches/registry.yaml`) |
 
-Every row except the last is in the tag `VERSIONS` pins and therefore in any
-image built from it. The NVFP4 row is not: it is marked `status: post-tag` in
-`patches/registry.yaml` and lands in the next pin.
+Every row except the last two is in the tag `VERSIONS` pins and therefore in
+any image built from it. The NVFP4 and fused-GDN rows are not: both are marked
+`status: post-tag` in `patches/registry.yaml` and land in the next pin.
 
 Measurements behind each are in the commit messages on
 [davetha/vllm](https://github.com/davetha/vllm), and the investigation history is
@@ -53,6 +54,8 @@ The gfx90a work here builds on people who got there first:
 ```text
 VERSIONS              every pin; base image by DIGEST, never a tag
 run.sh                serve any model in one command -- docs/RUNNING.md
+gpu-nodes.sh          picks the gfx90a cards on a mixed-GPU host; sourced by
+                      run.sh and build/add-aiter.sh
 compose.yaml          the stack consumers run
 build/                the ONE compiled layer + its gates
   Dockerfile          rebuilds _rocm_C for gfx90a. NEEDS NO GPU.
@@ -133,6 +136,16 @@ slow rather than by erroring.
 `compose.yaml` is the other way in, for a deployment you run repeatedly. Both
 are covered in [docs/RUNNING.md](docs/RUNNING.md), along with the settings that
 are not optional on ROCm and the errors worth recognising.
+
+**If this host holds cards of more than one architecture, read
+[Which GPUs the container sees](docs/RUNNING.md#which-gpus-the-container-sees)
+before anything else.** vLLM reads the GPU architecture once at import, from
+amdsmi, for physical device 0 — ignoring `HIP_VISIBLE_DEVICES` and
+`ROCR_VISIBLE_DEVICES` alike. Give a mixed host's container all of `/dev/dri`
+and vLLM can decide the box is gfx12, disable every gfx9 path, and run decode
+**2.4x slower** (48.0 → 19.9 tok/s on Qwen3.8-27B-W8A8) with no error anywhere.
+`run.sh` selects the gfx90a render nodes for you; `compose.yaml` needs
+`GPU_RENDER_NODE`. A host whose cards are all gfx90a is unaffected.
 
 On an HPC site without Docker, see [docs/APPTAINER.md](docs/APPTAINER.md) —
 Frontier's MI250X is gfx90a, the same architecture this image targets.
