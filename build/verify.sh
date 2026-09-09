@@ -121,6 +121,33 @@ gate "gate DECLINES block_size 544 on gfx90a (Qwen3-Next safety)" \
      "$PY -c 'import torch;from vllm.platforms.rocm import use_rocm_custom_paged_attention as g;assert not g(torch.bfloat16,128,544,8,65536,0,\"auto\",None,None)'"
 gate "gate ACCEPTS 1M context" \
      "$PY -c 'import torch;from vllm.platforms.rocm import use_rocm_custom_paged_attention as g;assert g(torch.bfloat16,128,16,8,1048576,0,\"auto\",None,None)'"
+
+# The architecture vLLM BELIEVES it is on, which is not always the one the card
+# reports. vllm/platforms/rocm.py caches _GCN_ARCH once at import from amdsmi,
+# asking for PHYSICAL device 0 -- and amdsmi ignores HIP_VISIBLE_DEVICES and
+# ROCR_VISIBLE_DEVICES alike. On a host that also holds a non-CDNA2 card, that can
+# be the other card: vLLM decides the box is gfx12, _ON_GFX9 goes False, and every
+# gfx9-gated path turns itself off while torch still reports gfx90a correctly.
+# Measured on a mixed MI210 + R9700 host: vLLM chose TritonInt8ScaledMMLinearKernel
+# over AiterInt8ScaledMMLinearKernel and Qwen3.8-27B-W8A8 decode ran at 19.9 tok/s
+# against 48.0. Nothing errored. Pass the container only the gfx90a render nodes --
+# gpu-nodes.sh does this, run.sh and add-aiter.sh both use it.
+gate "vLLM resolves the arch as gfx90a (not another card in this host)" \
+     "$PY -c 'from vllm.platforms.rocm import _GCN_ARCH,_ON_GFX9;assert _ON_GFX9 and \"gfx90a\" in _GCN_ARCH, _GCN_ARCH'"
+
+# Only meaningful once add-aiter.sh has run. Without AITER the Triton int8 kernel is
+# the correct choice rather than a regression, so this reports instead of gating --
+# same rule as the tier 0 code-objects check.
+if [ -s /usr/local/share/repatch-report.txt ]; then
+    # VLLM_ROCM_USE_AITER=1 is set here on purpose. The question is whether this
+    # IMAGE can select the AITER kernel, not whether the caller happened to export
+    # the flag -- verify-image runs with a bare environment, where the answer would
+    # always be no. compose.yaml and run.sh set it for real serving.
+    gate "AITER int8 GEMM selectable (else W8A8 falls to Triton, ~1/3 decode)" \
+         "VLLM_ROCM_USE_AITER=1 $PY -c 'from vllm._aiter_ops import rocm_aiter_ops;assert rocm_aiter_ops.is_linear_enabled()'"
+else
+    note "AITER int8 GEMM selectable" "N/A (no AITER in this image)"
+fi
 fi
 
 echo
