@@ -472,6 +472,28 @@ on one MI210 — with the render nodes already correct.
 Note this is upstream vLLM behaviour, not something this fork introduced —
 a single global arch is simply not a safe assumption on a heterogeneous host.
 
+## Speculative decoding
+
+The largest decode lever on these cards — worth **2.4x** on Qwen3.8-27B, more than any
+kernel change measured here. It needs a separate draft checkpoint, and the best setting is
+not the obvious one. [SPEC-DECODE.md](SPEC-DECODE.md).
+
+```bash
+--speculative-config '{"method": "dflash",
+                       "model": "/models/qwen38-dflash2",
+                       "num_speculative_tokens": 12}'
+```
+
+Pull the draft with `hf download z-lab/Qwen3.8-27B-DFlash2`. DFlash2 is native in vLLM from
+v0.28.0rc2 and needs no fork patch.
+
+## Quantized checkpoints
+
+INT8 W8A8 is the quantization that pays on CDNA2. Whether it *does* depends on vLLM
+selecting AITER's CK GEMM, and on how much of the model the recipe actually quantized —
+a stock W8A8 pass leaves the gated-delta-net projections and `lm_head` in BF16, which is
+~40% of the decode bytes on this architecture. [INT8-GFX90A.md](INT8-GFX90A.md).
+
 ## Multiple GPUs
 
 `--tensor-parallel-size 2` uses both cards. It requires the model's attention
