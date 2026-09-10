@@ -472,6 +472,13 @@ on one MI210 — with the render nodes already correct.
 Note this is upstream vLLM behaviour, not something this fork introduced —
 a single global arch is simply not a safe assumption on a heterogeneous host.
 
+## A complete worked example
+
+If you are serving Qwen3.8-27B, [RECIPE-QWEN38-27B-INT8.md](RECIPE-QWEN38-27B-INT8.md) is
+the whole thing in one place — which image, which checkpoint, which draft, the device
+nodes, the flags, and how to verify it took the fast paths. Everything below is the
+general case.
+
 ## Speculative decoding
 
 The largest decode lever on these cards — worth **2.4x** on Qwen3.8-27B, more than any
