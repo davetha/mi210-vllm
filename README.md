@@ -54,6 +54,10 @@ The gfx90a work here builds on people who got there first:
 ```text
 VERSIONS              every pin; base image by DIGEST, never a tag
 run.sh                serve any model in one command -- docs/RUNNING.md
+docs/SPEC-DECODE.md   speculation: dflash N=12, the draft, and why depth is not
+                      a fixed property of the model
+docs/INT8-GFX90A.md   INT8 W8A8: confirming the AITER kernel, and what a stock
+                      W8A8 recipe leaves in BF16
 gpu-nodes.sh          picks the gfx90a cards on a mixed-GPU host; sourced by
                       run.sh and build/add-aiter.sh
 compose.yaml          the stack consumers run
