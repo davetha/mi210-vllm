@@ -54,6 +54,9 @@ The gfx90a work here builds on people who got there first:
 ```text
 VERSIONS              every pin; base image by DIGEST, never a tag
 run.sh                serve any model in one command -- docs/RUNNING.md
+docs/RECIPE-QWEN38-27B-INT8.md
+                      end-to-end: the fastest known config for this model on
+                      one MI210, copy-pasteable
 docs/SPEC-DECODE.md   speculation: dflash N=12, the draft, and why depth is not
                       a fixed property of the model
 docs/INT8-GFX90A.md   INT8 W8A8: confirming the AITER kernel, and what a stock
@@ -108,6 +111,11 @@ gate DECLINES block_size 544   Qwen3-Next safety; silently wrong otherwise
 
 Serves an OpenAI-compatible API on `:8000`. Needs only `docker run` — no compose
 plugin, no config file.
+
+For Qwen3.8-27B specifically there is a complete recipe — image, checkpoint, draft model,
+device nodes, flags and the three greps that confirm it took the fast paths:
+[docs/RECIPE-QWEN38-27B-INT8.md](docs/RECIPE-QWEN38-27B-INT8.md). It is worth **2.4x** over
+a naive launch on a mixed-GPU host.
 
 The rest of the CLI is there too, with the GPUs, mounts and ROCm environment
 already correct:
